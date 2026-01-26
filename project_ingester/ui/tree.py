@@ -198,6 +198,9 @@ class HybridNodeContainer(QWidget):
         self.item = item
         self.is_root = is_root
 
+        self.is_root = is_root
+
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)

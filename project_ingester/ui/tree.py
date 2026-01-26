@@ -265,14 +265,18 @@ class HybridNodeContainer(QWidget):
                 self.btn_expand.setText("▶")
 
     def on_context_menu(self, pos):
-        global_pos = self.mapToGlobal(pos)
-        self._show_context_menu(global_pos)
+        if self.node_frame.geometry().contains(pos):
+            global_pos = self.mapToGlobal(pos)
+            self._show_node_context_menu(global_pos)
+        else:
+            global_pos = self.mapToGlobal(pos)
+            self._show_background_context_menu(global_pos)
 
     def on_name_edit_context_menu(self, pos):
         global_pos = self.node_frame.name_edit.mapToGlobal(pos)
-        self._show_context_menu(global_pos)
+        self._show_node_context_menu(global_pos)
 
-    def _show_context_menu(self, global_pos):
+    def _show_node_context_menu(self, global_pos):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #555; } QMenu::item:selected { background-color: #0d47a1; }")
         
@@ -297,6 +301,18 @@ class HybridNodeContainer(QWidget):
         action_gen_hier = QAction("Includes Hierarchy", self)
         action_gen_hier.triggered.connect(lambda: self.run_generate(hierarchy=True))
         gen_menu.addAction(action_gen_hier)
+        
+        if QT_VERSION == 6:
+            menu.exec(global_pos)
+        else:
+            menu.exec_(global_pos)
+
+    def _show_background_context_menu(self, global_pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #555; } QMenu::item:selected { background-color: #0d47a1; }")
+        action = QAction("Export as JSON", self)
+        action.triggered.connect(self.tree.export_structure_to_json)
+        menu.addAction(action)
         
         if QT_VERSION == 6:
             menu.exec(global_pos)

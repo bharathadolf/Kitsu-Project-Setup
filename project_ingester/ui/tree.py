@@ -321,37 +321,47 @@ class HybridNodeContainer(QWidget):
 
     def run_dry_run(self, hierarchy=False):
         node_name = self.node_frame.properties.get("name", "Unknown")
-        self.log_to_console(f"========================================", "INFO")
-        self.log_to_console(f"[DRY-RUN] Started for: {node_name}", "INFO")
-        self.log_to_console(f"Mode: {'Hierarchy' if hierarchy else 'Selected Only'}", "INFO")
+        
+        output_lines = []
+        output_lines.append(f"========================================")
+        output_lines.append(f"[DRY-RUN] Started for: {node_name}")
+        output_lines.append(f"Mode: {'Hierarchy' if hierarchy else 'Selected Only'}")
         
         if hierarchy:
-            self._log_hierarchy(self.item, level=0)
+            self._log_hierarchy(self.item, output_lines, level=0)
         else:
-            props = json.dumps(self.node_frame.properties, indent=2)
-            self.log_to_console(f"Node: {node_name}\nProperties: {props}", "INFO")
+            props = json.dumps(self.node_frame.properties, indent=4)
+            output_lines.append(f"{node_name}")
+            output_lines.append(f"    Properties:")
+            for line in props.split('\n'):
+                output_lines.append(f"        {line}")
             
-        self.log_to_console(f"========================================", "INFO")
+        output_lines.append(f"========================================")
+        
+        self.log_to_console("\n".join(output_lines), "INFO")
 
-    def _log_hierarchy(self, item, level=0):
+    def _log_hierarchy(self, item, output_lines, level=0):
         widget = self.tree.itemWidget(item, 0)
         if not widget: return
         
-        indent = "  " * level
-        marker = "└── " if level > 0 else ""
-        name = widget.node_frame.properties.get("name", "Unknown")
-        props = json.dumps(widget.node_frame.properties, indent=2)
-        
-        # Log concise line first
-        self.log_to_console(f"{indent}{marker}{name}", "INFO")
-        # Log properties (maybe too verbose? user asked for properties)
-        # self.log_to_console(f"{indent}    Properties: {props}", "INFO")
-        
+        # Tree indentation for the node name
         if level == 0:
-             self.log_to_console(f"Properties:\n{props}", "INFO")
+            prefix = ""
+        else:
+            prefix = "  " * (level - 1) + "└── "
+            
+        name = widget.node_frame.properties.get("name", "Unknown")
+        output_lines.append(f"{prefix}{name}")
+        
+        # Properties indentation (indented relative to the node name)
+        prop_indent = "    " if level == 0 else ("  " * level + "    ")
+        props_str = json.dumps(widget.node_frame.properties, indent=4)
+        output_lines.append(f"{prop_indent}Properties:")
+        for line in props_str.split('\n'):
+            output_lines.append(f"{prop_indent}    {line}")
 
         for i in range(item.childCount()):
-            self._log_hierarchy(item.child(i), level + 1)
+            self._log_hierarchy(item.child(i), output_lines, level + 1)
 
     def run_generate(self, hierarchy=False):
         self.log_to_console(f"[GENERATE] Feature not implemented yet (Target: {self.node_frame.properties.get('name')})", "WARNING")

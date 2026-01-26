@@ -32,7 +32,7 @@ class ConsoleWidget(QtWidgets.QTextEdit):
         <div style="margin: 2px 0;">
             <span style="color: #888;">[{timestamp}]</span>
             <span style="color: {color}; font-weight: bold;"> [{level}]</span>
-            <span style="color: #d4d4d4;"> {message}</span>
+            <span style="color: #d4d4d4; white-space: pre-wrap;"> {message}</span>
         </div>
         """
         self.append(html_message)

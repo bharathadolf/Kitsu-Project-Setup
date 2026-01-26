@@ -19,6 +19,8 @@ from .console import ConsoleWidget
 # But for now, let's create app.py assuming it exists, and I will fix tree.py in next step.
 
 from .themes import DARK_THEME, get_next_theme
+from ..kitsu_config import gazu, KITSU_HOST, KITSU_EMAIL, KITSU_PASSWORD
+
 
 class MainWindow(QMainWindow):
     def __init__(self, parent=None):
@@ -81,6 +83,17 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"PySide{QT_VERSION} - Ready")
         self.setStatusBar(self.status_bar)
 
+        # Kitsu Status Light
+        self.status_light = QLabel()
+        self.status_light.setFixedSize(16, 16)
+        self.status_light.setStyleSheet("background-color: grey; border-radius: 8px; border: 1px solid #444;")
+        self.status_light.setToolTip("Kitsu Connection Status")
+        self.status_bar.addWidget(self.status_light)
+        # Add some spacing
+        spacer = QWidget()
+        spacer.setFixedWidth(10)
+        self.status_bar.addWidget(spacer)
+
         # Toggle Button
         self.theme_btn = QPushButton(f"Theme: {self.current_theme.name}")
         self.theme_btn.setFlat(True)
@@ -142,6 +155,11 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda checked=False, r=rule_name: self.apply_template(r))
             template_menu.addAction(action)
 
+        view_menu.addSeparator()
+        connect_action = QAction("Connect", self)
+        connect_action.triggered.connect(self.connect_kitsu)
+        view_menu.addAction(connect_action)
+
     def clear_console(self):
         self.console.clear()
         self.console.log("Console cleared", "INFO")
@@ -164,3 +182,22 @@ class MainWindow(QMainWindow):
     def showEvent(self, event):
         self.update_panel_sizes()
         super().showEvent(event)
+
+    def connect_kitsu(self):
+        if gazu is None:
+            self.console.log("Gazu library not found. Please install 'gazu'.", "ERROR")
+            self.status_light.setStyleSheet("background-color: red; border-radius: 8px; border: 1px solid #444;")
+            return
+
+        self.console.log(f"Connecting to Kitsu at {KITSU_HOST}...", "INFO")
+        try:
+            gazu.set_host(KITSU_HOST)
+            gazu.log_in(KITSU_EMAIL, KITSU_PASSWORD)
+            
+            self.console.log("✅ Login successful", "SUCCESS")
+            # Blink effect (implementation via stylesheet transition is hard in Qt SS, so we just set green)
+            self.status_light.setStyleSheet("background-color: #00ff00; border-radius: 8px; border: 1px solid #444; box-shadow: 0 0 5px #00ff00;")
+            
+        except Exception as e:
+            self.console.log(f"❌ Connection failed: {str(e)}", "ERROR")
+            self.status_light.setStyleSheet("background-color: red; border-radius: 8px; border: 1px solid #444;")

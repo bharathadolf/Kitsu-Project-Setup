@@ -394,6 +394,33 @@ class VisualTree(QtWidgets.QTreeWidget):
         self.customContextMenuRequested.connect(self.on_context_menu)
 
     def on_context_menu(self, pos):
+        item = self.itemAt(pos)
+        if item:
+            widget = self.itemWidget(item, 0)
+            if widget and hasattr(widget, 'on_context_menu'):
+                # Delegate to widget context menu logic
+                # Map global position because on_context_menu expects relative or global?
+                # HybridNodeContainer.on_context_menu expects relative pos to widget usually if called by signal, 
+                # but let's check what it uses. It uses mapToGlobal(pos).
+                # If we pass tree relative pos, widget.mapToGlobal(pos) might be wrong if pos is not in widget coords.
+                # However, QMenu.exec usually wants Global.
+                
+                # Let's call a helper on widget that takes GLOBAL pos directly to be safe, 
+                # OR map pos from Tree to Widget.
+                
+                # Tree pos -> Global
+                global_pos = self.mapToGlobal(pos)
+                
+                # Widget expects 'pos' to be relative to itself to do mapToGlobal(pos) inside? 
+                # Wait, looking at HybridNodeContainer code:
+                #    global_pos = self.mapToGlobal(pos)
+                # It expects 'pos' to be local to the widget.
+                
+                # So we map Tree Pos -> Widget Pos
+                widget_pos = widget.mapFromGlobal(global_pos)
+                widget.on_context_menu(widget_pos)
+                return
+
         menu = QtWidgets.QMenu(self)
         action = QAction("Export as JSON", self)
         action.triggered.connect(self.export_structure_to_json)

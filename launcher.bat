@@ -55,8 +55,13 @@ start "%APP_WINDOW_TITLE%" "%PYTHON_CMD%" main.py
 :: ---------------------------------------------------------
 :: 3. Monitor Loop
 :: ---------------------------------------------------------
+set /a CHECK_COUNT=0
+
 :MONITOR_LOOP
 timeout /t %CHECK_INTERVAL% /nobreak >nul
+
+:: Increment Check Count
+set /a CHECK_COUNT+=1
 
 :: Fetch updates from remote
 git fetch origin main >nul 2>&1
@@ -67,16 +72,13 @@ for /f %%i in ('git rev-parse origin/main') do set REMOTE_HASH=%%i
 
 if "%LOCAL_HASH%" neq "%REMOTE_HASH%" (
     echo.
-    echo [UPDATE DETECTED] Remote hash: %REMOTE_HASH%
+    echo ========================================================
+    echo [UPDATE DETECTED] Time: %TIME% | Check #!CHECK_COUNT!
+    echo Remote hash: %REMOTE_HASH%
+    echo ========================================================
     echo [ACTION] Closing application and updating...
     
     :: Kill the specific application
-    :: Note: Since we don't have the PID easily, we rely on taskkill by window title 
-    :: or simply killing python processes launched from this folder could be tricky.
-    :: For now, we try to kill strictly by Window Title if main.py sets it, 
-    :: OR we might have to just kill all python.exe processes (dangerous).
-    :: Refined approach: We will assume main.py sets title via code or we just restart.
-    
     taskkill /FI "WINDOWTITLE eq %APP_WINDOW_TITLE%*" /T /F >nul 2>&1
     
     :: Force update
@@ -85,6 +87,8 @@ if "%LOCAL_HASH%" neq "%REMOTE_HASH%" (
     
     echo [INFO] Update complete. Restarting...
     goto START_APP
+) else (
+    echo [MONITOR] Check #!CHECK_COUNT! at %TIME% - System is up to date ...
 )
 
 goto MONITOR_LOOP

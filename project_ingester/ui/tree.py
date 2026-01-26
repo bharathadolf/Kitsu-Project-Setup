@@ -240,6 +240,10 @@ class HybridNodeContainer(QWidget):
         self.node_frame.delete_req.connect(self.request_delete.emit)
         layout.addWidget(self.node_frame)
 
+        # Connect name_edit context menu to custom handler
+        self.node_frame.name_edit.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.node_frame.name_edit.customContextMenuRequested.connect(self.on_name_edit_context_menu)
+
         self.update_expander_icon()
 
     def toggle_expand(self):
@@ -261,6 +265,14 @@ class HybridNodeContainer(QWidget):
                 self.btn_expand.setText("▶")
 
     def on_context_menu(self, pos):
+        global_pos = self.mapToGlobal(pos)
+        self._show_context_menu(global_pos)
+
+    def on_name_edit_context_menu(self, pos):
+        global_pos = self.node_frame.name_edit.mapToGlobal(pos)
+        self._show_context_menu(global_pos)
+
+    def _show_context_menu(self, global_pos):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #555; } QMenu::item:selected { background-color: #0d47a1; }")
         
@@ -286,7 +298,6 @@ class HybridNodeContainer(QWidget):
         action_gen_hier.triggered.connect(lambda: self.run_generate(hierarchy=True))
         gen_menu.addAction(action_gen_hier)
         
-        global_pos = self.mapToGlobal(pos)
         if QT_VERSION == 6:
             menu.exec(global_pos)
         else:

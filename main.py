@@ -28,6 +28,7 @@ def main():
         parent = hou.ui.mainQtWindow()
         window = MainWindow(parent)
         window.show()
+        window.setWindowTitle("ProjectIngesterApp")
         hou.session.project_ingester_window = window
     else:
         app = QApplication.instance()

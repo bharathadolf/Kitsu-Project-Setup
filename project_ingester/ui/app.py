@@ -197,7 +197,7 @@ class MainWindow(QMainWindow):
             
             self.console.log("✅ Login successful", "SUCCESS")
             # Green Light
-            self.status_light.setStyleSheet("background-color: #00FF00; border-radius: 10px; border: 2px solid #333; box-shadow: 0 0 5px #00FF00;")
+            self.status_light.setStyleSheet("background-color: #00FF00; border-radius: 10px; border: 2px solid #55FF55;")
             self.status_light.setToolTip("Status: Connected to Kitsu")
             
         except Exception as e:

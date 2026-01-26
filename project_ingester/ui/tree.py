@@ -198,10 +198,13 @@ class HybridNodeContainer(QWidget):
         self.item = item
         self.is_root = is_root
 
-        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
+        # Context Menu
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.on_context_menu)
 
         self.btn_expand = QPushButton("▼")
         self.btn_expand.setFixedSize(16, 16)
@@ -253,6 +256,82 @@ class HybridNodeContainer(QWidget):
                 self.btn_expand.setStyleSheet(ss.replace("background: #1e1e1e", "background: #424242"))
             else:
                 self.btn_expand.setText("▶")
+
+    def on_context_menu(self, pos):
+        menu = QtWidgets.QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #555; } QMenu::item:selected { background-color: #0d47a1; }")
+        
+        # Dry Run Menu
+        dry_run_menu = menu.addMenu("Dry-run")
+        
+        action_dry_sel = QAction("Selected Entity Only", self)
+        action_dry_sel.triggered.connect(lambda: self.run_dry_run(hierarchy=False))
+        dry_run_menu.addAction(action_dry_sel)
+        
+        action_dry_hier = QAction("Includes Hierarchy", self)
+        action_dry_hier.triggered.connect(lambda: self.run_dry_run(hierarchy=True))
+        dry_run_menu.addAction(action_dry_hier)
+        
+        # Generate Menu
+        gen_menu = menu.addMenu("Generate")
+        
+        action_gen_sel = QAction("Selected Entity Only", self)
+        action_gen_sel.triggered.connect(lambda: self.run_generate(hierarchy=False))
+        gen_menu.addAction(action_gen_sel)
+        
+        action_gen_hier = QAction("Includes Hierarchy", self)
+        action_gen_hier.triggered.connect(lambda: self.run_generate(hierarchy=True))
+        gen_menu.addAction(action_gen_hier)
+        
+        global_pos = self.mapToGlobal(pos)
+        if QT_VERSION == 6:
+            menu.exec(global_pos)
+        else:
+            menu.exec_(global_pos)
+
+    def run_dry_run(self, hierarchy=False):
+        node_name = self.node_frame.properties.get("name", "Unknown")
+        self.log_to_console(f"========================================", "INFO")
+        self.log_to_console(f"[DRY-RUN] Started for: {node_name}", "INFO")
+        self.log_to_console(f"Mode: {'Hierarchy' if hierarchy else 'Selected Only'}", "INFO")
+        
+        if hierarchy:
+            self._log_hierarchy(self.item, level=0)
+        else:
+            props = json.dumps(self.node_frame.properties, indent=2)
+            self.log_to_console(f"Node: {node_name}\nProperties: {props}", "INFO")
+            
+        self.log_to_console(f"========================================", "INFO")
+
+    def _log_hierarchy(self, item, level=0):
+        widget = self.tree.itemWidget(item, 0)
+        if not widget: return
+        
+        indent = "  " * level
+        marker = "└── " if level > 0 else ""
+        name = widget.node_frame.properties.get("name", "Unknown")
+        props = json.dumps(widget.node_frame.properties, indent=2)
+        
+        # Log concise line first
+        self.log_to_console(f"{indent}{marker}{name}", "INFO")
+        # Log properties (maybe too verbose? user asked for properties)
+        # self.log_to_console(f"{indent}    Properties: {props}", "INFO")
+        
+        if level == 0:
+             self.log_to_console(f"Properties:\n{props}", "INFO")
+
+        for i in range(item.childCount()):
+            self._log_hierarchy(item.child(i), level + 1)
+
+    def run_generate(self, hierarchy=False):
+        self.log_to_console(f"[GENERATE] Feature not implemented yet (Target: {self.node_frame.properties.get('name')})", "WARNING")
+
+    def log_to_console(self, message, level="INFO"):
+        # We need to bubble this up to ProjectStructureWidget -> MainWindow -> Console
+        # HybridNodeContainer -> VisualTree -> ProjectStructureWidget
+        if hasattr(self.tree, 'log_requested'):
+             self.tree.log_requested.emit(message, level)
+
 
 class VisualTree(QtWidgets.QTreeWidget):
     customItemClicked = Signal(object)

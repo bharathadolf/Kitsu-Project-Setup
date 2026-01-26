@@ -85,9 +85,9 @@ class MainWindow(QMainWindow):
 
         # Kitsu Status Light
         self.status_light = QLabel()
-        self.status_light.setFixedSize(16, 16)
-        self.status_light.setStyleSheet("background-color: grey; border-radius: 8px; border: 1px solid #444;")
-        self.status_light.setToolTip("Kitsu Connection Status")
+        self.status_light.setFixedSize(20, 20)
+        self.status_light.setStyleSheet("background-color: #555555; border-radius: 10px; border: 2px solid #333;")
+        self.status_light.setToolTip("Kitsu Connection Status: Not Connected")
         self.status_bar.addWidget(self.status_light)
         # Add some spacing
         spacer = QWidget()
@@ -186,7 +186,8 @@ class MainWindow(QMainWindow):
     def connect_kitsu(self):
         if gazu is None:
             self.console.log("Gazu library not found. Please install 'gazu'.", "ERROR")
-            self.status_light.setStyleSheet("background-color: red; border-radius: 8px; border: 1px solid #444;")
+            self.status_light.setStyleSheet("background-color: #FF4444; border-radius: 10px; border: 2px solid #333;")
+            self.status_light.setToolTip("Status: Error (Gazu Missing)")
             return
 
         self.console.log(f"Connecting to Kitsu at {KITSU_HOST}...", "INFO")
@@ -195,9 +196,11 @@ class MainWindow(QMainWindow):
             gazu.log_in(KITSU_EMAIL, KITSU_PASSWORD)
             
             self.console.log("✅ Login successful", "SUCCESS")
-            # Blink effect (implementation via stylesheet transition is hard in Qt SS, so we just set green)
-            self.status_light.setStyleSheet("background-color: #00ff00; border-radius: 8px; border: 1px solid #444; box-shadow: 0 0 5px #00ff00;")
+            # Green Light
+            self.status_light.setStyleSheet("background-color: #00FF00; border-radius: 10px; border: 2px solid #333; box-shadow: 0 0 5px #00FF00;")
+            self.status_light.setToolTip("Status: Connected to Kitsu")
             
         except Exception as e:
             self.console.log(f"❌ Connection failed: {str(e)}", "ERROR")
-            self.status_light.setStyleSheet("background-color: red; border-radius: 8px; border: 1px solid #444;")
+            self.status_light.setStyleSheet("background-color: #FF0000; border-radius: 10px; border: 2px solid #333;")
+            self.status_light.setToolTip(f"Status: Connection Failed ({str(e)})")

@@ -364,7 +364,14 @@ class HybridNodeContainer(QWidget):
             self._log_hierarchy(item.child(i), output_lines, level + 1)
 
     def run_generate(self, hierarchy=False):
-        self.log_to_console(f"[GENERATE] Feature not implemented yet (Target: {self.node_frame.properties.get('name')})", "WARNING")
+        from ..utils.kitsu_helper import KitsuGenerator
+        try:
+            generator = KitsuGenerator(log_callback=self.log_to_console)
+            generator.process_node(self.item, self.tree, hierarchy=hierarchy)
+        except Exception as e:
+            self.log_to_console(f"Generate failed: {e}", "ERROR")
+            import traceback
+            self.log_to_console(traceback.format_exc(), "ERROR")
 
     def log_to_console(self, message, level="INFO"):
         # We need to bubble this up to ProjectStructureWidget -> MainWindow -> Console

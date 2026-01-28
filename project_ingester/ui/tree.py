@@ -652,6 +652,7 @@ class ProjectStructureWidget(QWidget):
         widget = self.tree.itemWidget(item, 0)
         if widget and widget.node_frame:
             widget.node_frame.properties["production_type"] = prod_type
+            widget.node_frame.properties["is_custom_template"] = (template_name == "Custom")
             
         self.populate_default_structure(item, "project")
 

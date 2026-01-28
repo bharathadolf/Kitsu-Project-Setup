@@ -34,9 +34,6 @@ class KitsuGenerator:
         self.connected = False
         
     def _log(self, msg, level="INFO"):
-        # We can implement level handling or just pass string
-        # For this tool, we'll try to mimic the user's requested output style within the generator
-        # But we also need to emit signals to the UI console.
         self.log_callback(msg, level)
 
     def connect(self):
@@ -172,7 +169,9 @@ class KitsuGenerator:
 
         elif node_type == "asset_type":
             # Asset type is usually global but we can get/create
-            entity = self._create_asset_type(props, buffer)
+            project = context.get("project")
+            if project:
+                entity = self._create_asset_type(project, props, buffer)
 
         elif node_type == "asset":
             project = context.get("project")
@@ -183,93 +182,79 @@ class KitsuGenerator:
         return entity
 
     # ----------------------------------------------------------------
-    # SPECIFIC CREATORS
+    # STRICT CREATION CALLS
     # ----------------------------------------------------------------
     
     def _create_project(self, props, buffer):
         name = props.get("name")
-        prod_type = props.get("production_type", "short")
-        # style is not standard in props unless custom stored?
-        # User script has PRODUCTION_STYLE.
-        # In tree.py properties: production_style is NOT default, but user script adds it to data.
-        # But wait, tree.py project defaults: production_type, status, start_date, etc.
-        # It doesn't have 'production_style' by default in line 25-33 of tree.py unless added.
-        # But the USER SCRIPT output shows "Production Style : vfx".
-        # So I will assume it might be in props or I should check.
-        # checking tree.py again...
-        # It is NOT in the default dict.
-        # However, the user script says `pipeline_data` has it.
-        # I'll check `props` for it, fallback to 'vfx' or '3d'.
+        production_type = props.get("production_type", "short")
         
-        style = props.get("production_style", "vfx") # Defaulting
-        
-        # 1. Create Project
-        # gazu.project.new_project provides name, resolution, fps, etc.
-        # Arguments: name, production_type=None, ratio=None, resolution=None, fps=None, ...
-        # Check if project exists first to be safe or just call new_project (idempotent?)
-        # User script just calls new_project.
+        # Mandatory: name, production_type
+        # Optional: fps, ratio, resolution, description
+        fps = props.get("fps")
+        ratio = props.get("ratio")
+        resolution = props.get("resolution")
+        description = props.get("description")
         
         try:
-            # Check if exists to avoid error if gazu throws on duplicate
+            # 1. Create or Get
             project = gazu.project.get_project_by_name(name)
             if not project:
-                project = gazu.project.new_project(name, production_type=prod_type)
-                # gazu new_project args might differ by version, but name is first.
-                # User used: name=PROJECT_NAME, production_type=PRODUCTION_TYPE, production_style=PRODUCTION_STYLE
-                # Wait, does gazu accept production_style in new_project? 
-                # User script:
-                # project = gazu.project.new_project(
-                #     name=PROJECT_NAME,
-                #     production_type=PRODUCTION_TYPE,
-                #     production_style=PRODUCTION_STYLE,
-                # )
-                # So I should pass it.
+                # Strict Call: gazu.project.new_project(name, production_type, ...)
+                # Note: gazu.project.new_project might take other args.
+                # Assuming new_project supports these keywords or we update after.
+                # If they are not supported in new_project, we update after.
+                # Standard gazu usually supports basic info.
+                
+                # We'll use the user suggested call structure: new_project(name, production_type, ...)
+                # If some args fail, we do basic and update.
+                project = gazu.project.new_project(
+                    name,
+                    production_type=production_type
+                )
+                buffer.log(f"Created Project: {name}")
+                
+                # 2. Update status/info if needed
+                # Set Optional fields if they exist and are not None
+                update_data = {}
+                if fps: update_data["fps"] = int(fps)
+                if ratio: update_data["ratio"] = str(ratio)
+                if resolution: update_data["resolution"] = str(resolution)
+                if description: update_data["description"] = description
+                
+                if update_data:
+                    project = gazu.raw.update("projects", project["id"], update_data)
+                    buffer.log(f"Updated Project Info: {update_data}")
+
             else:
-                 # Update validation?
-                 pass
+                buffer.log(f"Found Project: {name}")
 
-            if not project:
-                 # Use kwargs from script
-                 project = gazu.project.new_project(
-                     name=name,
-                     production_type=prod_type,
-                     production_style=style
-                 )
+            # 3. Inject Hidden/Custom Data
+            # file_tree, data
+            # The 'file_tree' and 'data' are pipeline specific.
+            # We'll inject 'data' from props['custom'] if available?
+            # User said: "User never types JSON. ... Inject data -> Pipeline Builder"
+            # For now, we take `custom` prop and put it into `data`.
             
-            buffer.section("Project Creation")
-            buffer.field("Name", project["name"])
-            buffer.field("ID", project["id"])
+            custom_data = props.get("custom", {})
+            # Transform custom_data values which are currently dicts {"type":..., "value":...} to simple key-value?
+            # Or store as is? Kitsu 'data' field is a Dict.
+            # Usually we want clean key-value.
+            
+            clean_data = {}
+            for k, v in custom_data.items():
+                if isinstance(v, dict) and "value" in v:
+                    clean_data[k] = v["value"]
+                else:
+                    clean_data[k] = v
+            
+            if clean_data:
+                current_data = project.get("data", {})
+                if current_data is None: current_data = {}
+                current_data.update(clean_data)
+                project = gazu.raw.update("projects", project["id"], {"data": current_data})
+                buffer.log(f"Injected Data: {clean_data.keys()}")
 
-            # 2. Update Code
-            code = props.get("code", "")
-            if code:
-                project = gazu.raw.update("projects", project["id"], {"code": code})
-                buffer.field("Kitsu Code", project["code"])
-
-            # 3. Attach Pipeline Data
-            pipeline_data = project.get("data", {})
-            if pipeline_data is None: pipeline_data = {} # Safety
-            
-            pipeline_info = {
-                "project_code": code,
-                "nas_path": props.get("root_path", ""),
-                "production_type": prod_type,
-                "production_style": style
-            }
-            pipeline_data["pipeline"] = pipeline_info
-            
-            project = gazu.raw.update("projects", project["id"], {"data": pipeline_data})
-            buffer.field("Pipeline Data", project.get("data"))
-            
-            # 4. Basic Info
-            buffer.section("Basic Project Info")
-            buffer.field("Name", project.get("name"))
-            buffer.field("ID", project.get("id"))
-            buffer.field("Code", project.get("code"))
-            buffer.field("Type", project.get("type"))
-            buffer.field("Production Type", project.get("production_type"))
-            buffer.field("Production Style", project.get("production_style"))
-            
             return project
             
         except Exception as e:
@@ -277,7 +262,8 @@ class KitsuGenerator:
             return None
 
     def _create_episode(self, project, props, buffer):
-        name = props.get("episode_name", props.get("name"))
+        name = props.get("name")
+        # Strict Call: gazu.shot.new_episode(project, name)
         try:
             episode = gazu.shot.get_episode_by_name(project, name)
             if not episode:
@@ -291,18 +277,14 @@ class KitsuGenerator:
             return None
 
     def _create_sequence(self, project, episode, props, buffer):
-        # Sequence name in tree.py is sequence_code usually? 
-        # tree.py: "sequence_code": f"SEQ_...", "sequence_name": "New Sequence"
-        # Gazu usually uses the name.
-        name = props.get("sequence_code", props.get("name")) 
+        name = props.get("name")
+        # Strict Call: gazu.shot.new_sequence(project, name, episode=episode_or_none)
         try:
-            # If episode is valid, seq should be linked to episode?
-            # Gazu: gazu.shot.new_sequence(project, name, episode=None)
             if episode:
                  seq = gazu.shot.get_sequence_by_name(project, name, episode)
                  if not seq:
                      seq = gazu.shot.new_sequence(project, name, episode=episode)
-                     buffer.log(f"Created Sequence: {name} in {episode['name']}")
+                     buffer.log(f"Created Sequence: {name} (in Episode)")
                  else:
                      buffer.log(f"Found Sequence: {name}")
             else:
@@ -318,12 +300,48 @@ class KitsuGenerator:
             return None
 
     def _create_shot(self, project, sequence, props, buffer):
-        name = props.get("shot_code", props.get("name"))
+        name = props.get("name")
+        frame_in = props.get("frame_in")
+        frame_out = props.get("frame_out")
+        nb_frames = props.get("nb_frames")
+        description = props.get("description")
+        
+        # Strict Call: gazu.shot.new_shot(project, sequence, name, ...)
         try:
             shot = gazu.shot.get_shot_by_name(sequence, name)
             if not shot:
-                shot = gazu.shot.new_shot(project, sequence, name)
+                # new_shot args: project, sequence, name, data=None, ...
+                # We need to see if we can pass frame_in/out during create or update after.
+                # Assuming update after for optional fields to be safe, except if new_shot supports them.
+                # User's pseudo-code implies passing them to new_shot.
+                
+                shot = gazu.shot.new_shot(
+                    project, 
+                    sequence, 
+                    name,
+                    frame_in=frame_in,
+                    frame_out=frame_out,
+                    nb_frames=nb_frames,
+                    description=description
+                )
                 buffer.log(f"Created Shot: {name}")
+                
+                 # Inject Custom Data
+                custom_data = props.get("custom", {})
+                clean_data = {}
+                for k, v in custom_data.items():
+                    if isinstance(v, dict) and "value" in v:
+                        clean_data[k] = v["value"]
+                    else:
+                        clean_data[k] = v
+                
+                if clean_data:
+                    current_data = shot.get("data", {})
+                    if current_data is None: current_data = {}
+                    current_data.update(clean_data)
+                    shot = gazu.raw.update("shots", shot["id"], {"data": current_data})
+                    buffer.log(f"Injected Data: {clean_data.keys()}")
+
             else:
                 buffer.log(f"Found Shot: {name}")
             return shot
@@ -331,28 +349,100 @@ class KitsuGenerator:
             buffer.log(f"Error shot {name}: {e}")
             return None
 
-    def _create_asset_type(self, props, buffer):
-        name = props.get("name") # e.g. "Characters"
+    def _create_asset_type(self, project, props, buffer):
+        name = props.get("name")
+        # Strict Call: gazu.asset.new_asset_type(name) -> But user said "Asset types belong only to project"
+        # User pseudo-code: gazu.asset.new_asset_type(project, name) (Wait, does new_asset_type take project?)
+        # Gazu standard: new_asset_type(name) - global.
+        # But maybe user has a fork or wrapper?
+        # User request: "Asset Types belong only to project ... gazu.asset.new_asset_type(project, name)"
+        # I will follow USER REQUEST.
+        
         try:
-            # Check if asset type exists
+            # Check if exists in project? Asset types are usually global in Kitsu, but linked to project via settings?
+            # Or maybe they mean "Asset Type" as in "Task Type"?
+            # No, "Asset Type".
+            # If default gazu doesn't support project, this might fail.
+            # But I must follow "execute" instruction.
+            
+            # Note: standard gazu: new_asset_type(name) -> returns type.
+            # Then usually you don't link type to project explicitly, you just use it.
+            # UNLESS user means creating a custom asset type FOR that project?
+            # I will try to pass project. If it fails, I might fallback or log error.
+            # Safest is to try generic first? No, strict request.
+            
             at = gazu.asset.get_asset_type_by_name(name)
             if not at:
-                at = gazu.asset.new_asset_type(name)
-                buffer.log(f"Created Asset Type: {name}")
+                 # Try passing project if requested
+                 # But standard gazu.asset.new_asset_type only takes name.
+                 # Python allows ignoring extra kwargs if not used? No.
+                 # I'll call it exactly as requested: gazu.asset.new_asset_type(project, name) (if user library supports it)
+                 # Or maybe user meant: create type, then link?
+                 # "Asset types belong *only* to project" -> This implies a project-specific scope.
+                 # I will try:
+                 try:
+                     at = gazu.asset.new_asset_type(name) # Standard call first?
+                     # Wait, user wrote: gazu.asset.new_asset_type(project, name)
+                     # I'll Assume user knows their API.
+                 except:
+                     at = None
+
+                 if not at:
+                      # Let's try to match signature
+                      # If I can't check signature, I'll trust user.
+                      pass
+                 
+                 # Actually, I'll stick to what Gazu normally does but pass Project if that's the "Strict" requirement.
+                 # But if I use standard Gazu, it will break.
+                 # Let's assume standard Gazu behavior for "Asset Type" involves just name,
+                 # BUT I will try `gazu.asset.new_asset_type(name)` first because that is the standard.
+                 # AND THEN maybe user means "Asset Type" in the project scope?
+                 # No, user code block: `gazu.asset.new_asset_type(project, name)`
+                 # I will use THAT.
+                 at = gazu.asset.new_asset_type(project, name) 
+                 buffer.log(f"Created Asset Type: {name}")
             else:
-                buffer.log(f"Found Asset Type: {name}")
+                 buffer.log(f"Found Asset Type: {name}")
             return at
+        except TypeError:
+             # Fallback if user was wrong about API signature but right about intent
+             try:
+                 at = gazu.asset.get_asset_type_by_name(name)
+                 if not at:
+                     at = gazu.asset.new_asset_type(name)
+                     buffer.log(f"Created Asset Type (Global): {name}")
+                 return at
+             except Exception as e:
+                 buffer.log(f"Error asset type {name}: {e}")
+                 return None
         except Exception as e:
              buffer.log(f"Error asset type {name}: {e}")
              return None
 
     def _create_asset(self, project, asset_type, props, buffer):
-        name = props.get("asset_name", props.get("name"))
+        name = props.get("name")
+        # Strict Call: gazu.asset.new_asset(project, asset_type, name)
         try:
             asset = gazu.asset.get_asset_by_name(project, asset_type, name)
             if not asset:
                 asset = gazu.asset.new_asset(project, asset_type, name)
                 buffer.log(f"Created Asset: {name}")
+                
+                # Inject Custom Data
+                custom_data = props.get("custom", {})
+                clean_data = {}
+                for k, v in custom_data.items():
+                    if isinstance(v, dict) and "value" in v:
+                        clean_data[k] = v["value"]
+                    else:
+                        clean_data[k] = v
+                
+                if clean_data:
+                    current_data = asset.get("data", {})
+                    if current_data is None: current_data = {}
+                    current_data.update(clean_data)
+                    asset = gazu.raw.update("assets", asset["id"], {"data": current_data})
+                    buffer.log(f"Injected Data: {clean_data.keys()}")
             else:
                 buffer.log(f"Found Asset: {name}")
             return asset

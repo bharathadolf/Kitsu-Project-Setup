@@ -4,6 +4,6 @@ try:
 except ImportError:
     gazu = None
 
-KITSU_HOST = "http://192.100.0.112/api"
-KITSU_EMAIL = "adolfbharath@gmail.com"
-KITSU_PASSWORD = "Bharath@2026"
+KITSU_HOST = "http://localhost/api"
+KITSU_EMAIL = "admin@example.com"
+KITSU_PASSWORD = "Gattig@Veyyi#3"

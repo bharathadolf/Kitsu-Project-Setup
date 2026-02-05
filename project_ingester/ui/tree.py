@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-import json
+
 from ..utils.compat import *
 from ..config import *
 from ..data.rules import RULE_MAP
@@ -16,24 +16,76 @@ class NodeFrame(QFrame):
         self.rules = rules or {}
         self.node_id = node_id
         
+        # Default Naming Logic
         name_val = node_type.capitalize()
-        if self.node_id and not is_root:
-             name_val = f"{node_type.capitalize()}#{self.node_id}"
+        local_index = 1
+        
+        if self.node_id:
+            try:
+                parts = str(self.node_id).split("::")
+                local_index = int(parts[-1])
+            except:
+                pass
+
+        if node_type == "project":
+            name_val = "proj"
+        elif node_type == "asset_type":
+            name_val = "asset_type"
+        elif node_type == "asset":
+            if local_index <= 1: name_val = "New asset"
+            else: name_val = f"New asset{local_index:02d}"
+        elif node_type == "episode":
+            name_val = f"Episode {local_index:02d}"
+        elif node_type == "sequence":
+            name_val = f"SQ{local_index:03d}"
+        elif node_type == "shot":
+            name_val = f"SH{local_index:03d}"
              
-        self.properties = {"name": name_val, "code": "", "custom": {}}
+        self.properties = {"name": name_val, "code": ""}
+        
+        # Auto-generate 'code' if not root and has ID
+        # User Req: "nth sequence will be 'seqn' n follows two digit padding"
+        # "same applies for other entities code parameter"
+        if not is_root and self.node_id:
+            try:
+                # node_id might be "1" or "1::2" etc. We want the last part.
+                # But wait, shot ID "1::1" -> Shot 1 of Seq 1.
+                # If we want unique code, "sh01" might conflict if global?
+                # Usually Shot codes are unique per sequence.
+                # "Shot#1::1" -> "sh01". "Shot#1::2" -> "sh02".
+                # "Shot#2::1" -> "sh01". This looks correct for local context.
+                
+                parts = str(self.node_id).split("::")
+                local_index = int(parts[-1])
+                
+                prefix_map = {
+                    "sequence": "seq",
+                    "shot": "sh", # Standard shot prefix
+                    "episode": "ep",
+                    "asset": "ast",
+                    "asset_type": "at"
+                }
+                
+                prefix = prefix_map.get(node_type.lower(), node_type[:3].lower())
+                code_val = f"{prefix}{local_index:02d}"
+                self.properties["code"] = code_val
+            except:
+                # Fallback if node_id is not parseable
+                pass
+
+        # Initial placeholders
+        self.properties["data"] = {}
+        
         if node_type == "project":
             self.properties.update({
                 "production_type": "short", 
-                "status": "active",
                 "start_date": datetime.now().strftime("%Y-%m-%d"),
                 "end_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
                 "root_path": "P:/projects/" + name_val.lower().replace(" ", "_"),
+                "production_style": "2d3d",
                 "task_template": [],
                 "asset_types": []
             })
-            if is_root:
-                 self.properties["code"] = "PRO"
-
             if is_root:
                  self.properties["code"] = "PRO"
                  
@@ -48,18 +100,12 @@ class NodeFrame(QFrame):
                  except: pass
 
         elif node_type == "sequence":
-            self.properties.update({
-                "sequence_code": f"SEQ_{self.node_id}" if self.node_id else "SEQ_01",
-                "sequence_name": "New Sequence"
-            })
+            # Removed sequence_code and sequence_name as requested
+            pass
             
         elif node_type == "shot":
-            self.properties.update({
-                "shot_code": f"SH_{self.node_id}" if self.node_id else "SH_010",
-                "output_format": ["exr"],
-                "rv_context_group": "shot_default",
-                "delivery_tag": ["wip"]
-            })
+            # Removed shot_code, output_format, rv_context_group, delivery_tag as requested
+            pass
             
         elif node_type == "asset_type":
              self.properties.update({
@@ -85,7 +131,7 @@ class NodeFrame(QFrame):
         self.setMouseTracking(True)
         self.current_theme = None
         self._is_selected = False
-
+        
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(1)
@@ -97,6 +143,7 @@ class NodeFrame(QFrame):
         self.name_edit.setFocusPolicy(Qt.NoFocus)
         self.name_edit.installEventFilter(self)
         layout.addWidget(self.name_edit)
+
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(2)
@@ -122,10 +169,10 @@ class NodeFrame(QFrame):
                 btn_layout.addWidget(btn_child)
 
             if is_deletable:
-                btn_del = self.create_btn("x", "Delete Node")
+                self.btn_del = self.create_btn("x", "Delete Node")
                 # We can style delete button specifically if needed in theme, 
                 # or just leave it red as exception. For now, let's leave hardcoded red as warning.
-                btn_del.setStyleSheet(f"""
+                self.btn_del.setStyleSheet(f"""
                     QPushButton {{
                         background-color: #c62828; 
                         border: 1px solid #c62828;
@@ -134,8 +181,12 @@ class NodeFrame(QFrame):
                     }}
                     QPushButton:hover {{ background-color: #e53935; }}
                 """)
-                btn_del.clicked.connect(self.delete_req.emit)
-                btn_layout.addWidget(btn_del)
+                self.btn_del.clicked.connect(self.delete_req.emit)
+                btn_layout.addWidget(self.btn_del)
+                self.btn_del.hide() # Default hidden, controlled by logic logic
+            else:
+                 self.btn_del = None
+
 
         layout.addStretch()
         
@@ -150,6 +201,11 @@ class NodeFrame(QFrame):
     def update_styles(self, theme):
         self.current_theme = theme
         self.setStyleSheet(theme.get_node_style("selected" if self._is_selected else "base"))
+
+    def set_delete_visible(self, visible):
+        if hasattr(self, 'btn_del') and self.btn_del:
+            self.btn_del.setVisible(visible)
+
 
     def eventFilter(self, source, event):
         if source == self.name_edit and event.type() == QtCore.QEvent.MouseButtonPress:
@@ -364,10 +420,10 @@ class HybridNodeContainer(QWidget):
             self._log_hierarchy(item.child(i), output_lines, level + 1)
 
     def run_generate(self, hierarchy=False):
-        from ..utils.kitsu_helper import KitsuGenerator
+        from ..core.setup import ProjectManager
         try:
-            generator = KitsuGenerator(log_callback=self.log_to_console)
-            generator.process_node(self.item, self.tree, hierarchy=hierarchy)
+            manager = ProjectManager(log_callback=self.log_to_console)
+            manager.process_node(self.item, self.tree, hierarchy=hierarchy)
         except Exception as e:
             self.log_to_console(f"Generate failed: {e}", "ERROR")
             import traceback
@@ -549,23 +605,27 @@ class VisualTree(QtWidgets.QTreeWidget):
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
-        painter = QPainter(self.viewport())
-        painter.setRenderHint(QPainter.Antialiasing)
-        
-        line_color = "#546e7a" # Fallback
-        if self.current_theme:
-            line_color = self.current_theme.colors['border']
-            
-        pen = QPen(QColor(line_color))
-        pen.setWidth(2)
-        pen.setStyle(Qt.SolidLine)
-        painter.setPen(pen)
-        
-        count = self.topLevelItemCount()
-        for i in range(count):
-            self.draw_recursive(painter, self.topLevelItem(i))
-        painter.end()
         super().paintEvent(event)
+        
+        painter = QPainter()
+        if painter.begin(self.viewport()):
+            try:
+                painter.setRenderHint(QPainter.Antialiasing)
+                
+                line_color = "#546e7a" # Fallback
+                if self.current_theme:
+                    line_color = self.current_theme.colors['border']
+                    
+                pen = QPen(QColor(line_color))
+                pen.setWidth(2)
+                pen.setStyle(Qt.SolidLine)
+                painter.setPen(pen)
+                
+                count = self.topLevelItemCount()
+                for i in range(count):
+                    self.draw_recursive(painter, self.topLevelItem(i))
+            finally:
+                painter.end()
                 
     def draw_recursive(self, painter, item):
         child_count = item.childCount()
@@ -584,23 +644,28 @@ class VisualTree(QtWidgets.QTreeWidget):
             return
         
         if hasattr(parent_w, 'node_frame'):
-            p_frame = parent_w.node_frame
-            p_origin = p_frame.mapTo(self.viewport(), QPoint(int(p_frame.width() / 2), p_frame.height()))
-            start_point = p_origin
-            
-            c_btn = child_w.btn_expand
-            c_origin = c_btn.mapTo(self.viewport(), QPoint(0, int(c_btn.height() / 2)))
-            end_point = c_origin
-            
-            dy = end_point.y() - start_point.y()
-            dx = end_point.x() - start_point.x()
-            c1 = QPoint(start_point.x(), start_point.y() + int(dy * 0.5))
-            c2 = QPoint(end_point.x() - int(dx * 0.5), end_point.y())
+            # Save state to isolate transformations etc
+            painter.save()
+            try:
+                p_frame = parent_w.node_frame
+                p_origin = p_frame.mapTo(self.viewport(), QPoint(int(p_frame.width() / 2), p_frame.height()))
+                start_point = p_origin
+                
+                c_btn = child_w.btn_expand
+                c_origin = c_btn.mapTo(self.viewport(), QPoint(0, int(c_btn.height() / 2)))
+                end_point = c_origin
+                
+                dy = end_point.y() - start_point.y()
+                dx = end_point.x() - start_point.x()
+                c1 = QPoint(start_point.x(), start_point.y() + int(dy * 0.5))
+                c2 = QPoint(end_point.x() - int(dx * 0.5), end_point.y())
 
-            path = QPainterPath()
-            path.moveTo(start_point)
-            path.cubicTo(c1, c2, end_point)
-            painter.drawPath(path)
+                path = QPainterPath()
+                path.moveTo(start_point)
+                path.cubicTo(c1, c2, end_point)
+                painter.drawPath(path)
+            finally:
+                painter.restore()
 
 class ProjectStructureWidget(QWidget):
     node_selected = Signal(object)
@@ -652,7 +717,6 @@ class ProjectStructureWidget(QWidget):
         widget = self.tree.itemWidget(item, 0)
         if widget and widget.node_frame:
             widget.node_frame.properties["production_type"] = prod_type
-            widget.node_frame.properties["is_custom_template"] = (template_name == "Custom")
             
         self.populate_default_structure(item, "project")
 
@@ -701,8 +765,12 @@ class ProjectStructureWidget(QWidget):
             parent_item.setExpanded(True)
             parent_widget = self.tree.itemWidget(parent_item, 0)
             if parent_widget: parent_widget.update_expander_icon()
+            self.refresh_siblings_buttons(parent_item)
+            
+
             
         return item
+
 
     def on_node_clicked(self, node_frame):
         mods = QApplication.keyboardModifiers()
@@ -774,4 +842,19 @@ class ProjectStructureWidget(QWidget):
             parent.removeChild(item)
             parent_widget = self.tree.itemWidget(parent, 0)
             if parent_widget: parent_widget.update_expander_icon()
+            self.refresh_siblings_buttons(parent)
+
+    def refresh_siblings_buttons(self, parent_item):
+        if not parent_item: return
+        child_count = parent_item.childCount()
+        for i in range(child_count):
+            child = parent_item.child(i)
+            widget = self.tree.itemWidget(child, 0)
+            if widget and hasattr(widget, 'node_frame'):
+                # Rule: First sibling (index 0) cannot be deleted.
+                # Rule: Only the LAST added sibling (latest) can be deleted.
+                is_last_sibling = (i == child_count - 1)
+                can_delete = (i > 0) and is_last_sibling
+                widget.node_frame.set_delete_visible(can_delete)
+
 

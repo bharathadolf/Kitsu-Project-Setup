@@ -8,7 +8,8 @@ try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
         QPushButton, QLabel, QLineEdit, QSplitter, QFrame, QScrollArea,
-        QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox
+        QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox, QDialog,
+        QTreeWidget, QTreeWidgetItem
     )
     QT_VERSION = 6
 except ImportError:
@@ -18,7 +19,8 @@ except ImportError:
     from PySide2.QtWidgets import (
         QAction, QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
         QPushButton, QLabel, QLineEdit, QSplitter, QFrame, QScrollArea,
-        QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox
+        QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox, QDialog,
+        QTreeWidget, QTreeWidgetItem
     )
     QT_VERSION = 2
 

@@ -207,6 +207,12 @@ class ProjectManager:
             child_context['parent_code'] = root_code
             child_context['parent_type'] = root_type
             
+            # Extract root data params (e.g. project_path)
+            root_data = step['params'].get('data', {})
+            if root_type == "project":
+                child_context['project_path'] = root_data.get('project_path')
+                child_context['project_code'] = root_data.get('project_code')
+            
             if hierarchy:
                 self._collect_children(item, tree_widget, plan, child_context)
         
@@ -231,6 +237,35 @@ class ProjectManager:
                 
                 branch_context['parent_code'] = current_code
                 branch_context['parent_type'] = current_type
+                
+                # Extract paths from the generated data to pass down
+                data_params = step['params'].get('data', {})
+                if current_type == "project":
+                    branch_context['project_path'] = data_params.get('project_path')
+                    branch_context['project_code'] = data_params.get('project_code')
+                elif current_type == "episode":
+                    branch_context['episode_path'] = data_params.get('episode_path')
+                    branch_context['episode_code'] = data_params.get('episode_code')
+                elif current_type == "sequence":
+                    branch_context['sequence_path'] = data_params.get('sequence_path')
+                    branch_context['sequence_code'] = data_params.get('sequence_code')
+                elif current_type == "asset_type":
+                     # Special case: Asset Type has no 'data' param, but we need to pass path to children
+                     # We need to calculate it here if it wasn't in data
+                     root_path = context.get('root_path', "E:/Termina") # Fallback
+                     project_code = context.get('project_code', "")
+                     # Asset type path usually: {root}/{proj}/assets/{asset_type_short_name}
+                     # We need the asset type code/name.
+                     at_name = step['name'].lower().replace(" ", "") # simple slugify
+                     # We assume standard structure for now or derived?
+                     # Let's try to get it from params if we put it there distinct from 'data'
+                     # But _resolve_params for asset_type returns minimal dict.
+                     
+                     # Let's calculate it here for context:
+                     proj_path = context.get('project_path', "")
+                     if proj_path:
+                         branch_context['asset_type_path'] = f"{proj_path}/assets/{at_name}"
+                         branch_context['asset_type_name'] = at_name
                 
                 # If we just entered a Sequence, reset shot counter in the branch context
                 if current_type == "sequence":
@@ -259,37 +294,66 @@ class ProjectManager:
 
     def _resolve_params(self, node_type, props, context):
         """
-        Extracts params from UI props and Auto-Generates Codes.
+        Extracts params from UI props and Auto-Generates Codes -> AND Data Parameters.
         """
         name = props.get("name", "Unknown")
         existing_codes = context.get('existing', {})
         counters = context.get('counters', {})
-        parent_code = context.get('parent_code')
+        
+        # Context Paths
+        project_path = context.get('project_path', "")
+        project_code = context.get('project_code', "")
+        episode_path = context.get('episode_path', "")
+        episode_code = context.get('episode_code', "")
+        sequence_path = context.get('sequence_path', "")
+        sequence_code = context.get('sequence_code', "")
+        asset_type_path = context.get('asset_type_path', "")
+        
         parent_type = context.get('parent_type')
         
         # Initialize Base Params with Name
         params = {"name": name}
         
-        # --- AUTO-CODE GENERATION ---
+        # Log start
+        self.log(f"Resolving params for {node_type}: {name}", "DEBUG")
+        
+        # --- AUTO-CODE GENERATION & DATA INJECTION ---
         code = None
+        data = {}
         
         if node_type == "project":
             code = code_gen.generate_project_code(name)
+            prod_type = props.get("production_type", "short")
+            root_path = props.get("root_path", "E:/Termina")
+            
+            proj_path_val = f"{root_path}/{code}".replace("\\", "/")
+            
+            # Generate Project Tree
+            proj_tree = self._get_project_tree_schema(prod_type)
+            
+            data = {
+                "root_path": root_path,
+                "project_code": code,
+                "project_path": proj_path_val,
+                "production_type": prod_type,
+                "project_tree": proj_tree
+            }
+            
             params.update({
-                "production_type": props.get("production_type", "short"),
+                "production_type": prod_type,
                 "production_style": props.get("production_style", "2d3d"),
                 "description": props.get("description"),
-                "code": code, # Injected Code
-                "data": props.get("data"),
+                "code": code,
+                "data": data, # Inject Data
                 "file_tree": props.get("file_tree")
             })
-            # Optional Params
-            if props.get("use_fps"): params["fps"] = props.get("fps")
-            if props.get("use_ratio"): params["ratio"] = props.get("ratio")
-            if props.get("use_resolution"): params["resolution"] = props.get("resolution")
-            if props.get("use_start_date"): params["start_date"] = props.get("start_date")
-            if props.get("use_end_date"): params["end_date"] = props.get("end_date")
             
+            # Additional Optional Params
+            for k in ["fps", "ratio", "resolution", "start_date", "end_date"]:
+                if props.get(f"use_{k}"): params[k] = props.get(k)
+                elif props.get(k): params[k] = props.get(k) # Fallback if direct key
+            
+            self.log(f"Generated Data for Project '{name}': {list(data.keys())}", "INFO")
             return params
             
         elif node_type == "episode":
@@ -297,11 +361,35 @@ class ProjectManager:
             count = counters["episode"]
             code = code_gen.generate_incremental_code("ep", existing_codes.get("episodes", []), count)
             counters["episode"] += 1 # Increment global counter
+            
+            # Episode Data logic
+            # "episode_tree": derived from TV/Custom logic
+            ep_path_val = f"{project_path}/{code}".replace("\\", "/") if project_path else ""
+            
+            data = {
+                "project_code": project_code,
+                "project_path": project_path,
+                "parent_type": "project",
+                "episode_code": code,
+                "episode_name": name,
+                "episode_path": ep_path_val,
+                "episode_tree": {
+                    "{sequence}": {
+                        "{shot}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                }
+            }
+            
+            self.log(f"Generated Data for Episode '{name}'", "INFO")
+            
             return {
                 "name": name, 
                 "code": code, 
                 "description": f"{name} and {code}",
-                "project": "<Context.Project>"
+                "project": "<Context.Project>",
+                "data": data
             }
             
         elif node_type == "sequence":
@@ -309,26 +397,82 @@ class ProjectManager:
             count = counters["sequence"]
             code = code_gen.generate_incremental_code("seq", existing_codes.get("sequences", []), count)
             counters["sequence"] += 1
+            
+            # Sequence Data Logic
+            # Parent can be Project or Episode
+            # Determine effective parent path
+            eff_parent_path = episode_path if episode_path else project_path
+            eff_parent_type = "episode" if episode_path else "project"
+            eff_parent_code = episode_code if episode_code else project_code
+            
+            # Determine suffix for path (Film vs TV)
+            # If TV (under episode), usually just /{seq_code}
+            # If Film (under project), usually /film/{seq_code} ?? 
+            # User request said: "Derived: {parent_path}/film/{sequence_code} or {parent_path}/{sequence_code}"
+            # Let's assume standard APPEND for now unless we know it's film. 
+            # We don't have 'production_type' here easily unless we passed it.
+            # Assuming standard structure:
+            
+            seq_path_val = f"{eff_parent_path}/{code}".replace("\\", "/")
+            
+            data = {
+                "project_code": project_code,
+                "project_path": project_path,
+                "parent_code": eff_parent_code,
+                "parent_path": eff_parent_path,
+                "parent_type": eff_parent_type,
+                "sequence_code": code,
+                "sequence_name": name,
+                "sequence_path": seq_path_val,
+                "sequence_tree": {
+                    "{shot}": {
+                        "{task_type}": { "work": {}, "publish": {} }
+                    }
+                }
+            }
+            
+            self.log(f"Generated Data for Sequence '{name}'", "INFO")
+
             return {
                 "name": name, 
                 "code": code, 
                 "description": f"{name} and {code}",
                 "project": "<Context.Project>", 
-                "episode": "<Context.Episode>"
+                "episode": "<Context.Episode>",
+                "data": data
             }
             
         elif node_type == "shot":
             # {seq_code}_sh{n:02}
-            # Need sequence code. If parent is Sequence, use parent_code.
-            if parent_type == "sequence" and parent_code:
-                seq_code = parent_code
+            # Need sequence code. 
+            if sequence_code:
+                seq_code_ref = sequence_code
             else:
-                seq_code = "seqXX" # Fallback if hierarchy issue
+                seq_code_ref = "seqXX" # Fallback
                 
             count = counters["shot"]
-            code = code_gen.generate_shot_code(seq_code, count + 1) # shots start at 1
+            code = code_gen.generate_shot_code(seq_code_ref, count + 1) # shots start at 1
             counters["shot"] += 1
             
+            # Shot Data Logic
+            shot_path_val = f"{sequence_path}/{code}".replace("\\", "/") if sequence_path else ""
+            
+            data = {
+                "project_code": project_code,
+                "project_path": project_path,
+                "sequence_code": seq_code_ref,
+                "sequence_path": sequence_path,
+                "parent_type": "sequence",
+                "shot_code": code,
+                "shot_name": name,
+                "shot_path": shot_path_val,
+                "shot_tree": {
+                    "{task_type}": { "work": {}, "publish": {} }
+                }
+            }
+            
+            self.log(f"Generated Data for Shot '{name}'", "INFO")
+
             return {
                 "name": name,
                 "code": code,
@@ -338,32 +482,138 @@ class ProjectManager:
                 "frame_out": props.get("frame_out"),
                 "nb_frames": props.get("nb_frames"),
                 "description": f"{name} and {code}",
-                "tasks": ["Compositing"]
+                "tasks": ["Compositing"],
+                "data": data
             }
             
         elif node_type == "asset_type":
+             # Asset Type has NO data parameter as per user request.
+             self.log(f"Processed Asset Type '{name}' (No Data Params)", "INFO")
              return {"name": name}
              
         elif node_type == "asset":
-             # {asset_type}_{asset_name}
-             # need asset type name.
-             asset_type_name = "asset"
-             # Try to find parent asset_type name if possible, or use fallback
-             if parent_type == "asset_type":
-                 pass 
+             # {asset_type}_{asset_name} -> actually {code}
+             # We need asset_type_name or similar. 
+             at_name = context.get('asset_type_name', "asset")
              
-             # Placeholder until context fixed or explicit type
-             code = code_gen.generate_asset_code("character", name) 
+             code = code_gen.generate_asset_code(at_name, name) 
              
+             # Asset Data Logic
+             # Parent is Asset Type
+             asset_path_val = f"{asset_type_path}/{code}".replace("\\", "/") if asset_type_path else ""
+             
+             data = {
+                "project_code": project_code,
+                "project_path": project_path,
+                "asset_type": at_name,
+                "asset_type_path": asset_type_path,
+                "parent_type": "asset_type",
+                "asset_code": code,
+                "asset_name": name,
+                "asset_path": asset_path_val,
+                "asset_tree": {
+                    "{task_type}": { "work": {}, "publish": {} }
+                }
+             }
+
+             self.log(f"Generated Data for Asset '{name}'", "INFO")
+
              return {
                  "name": name,
                  "code": code,
                  "project": "<Context.Project>",
                  "asset_type": "<Context.AssetType>",
-                 "description": f"{name} and {code}"
+                 "description": f"{name} and {code}",
+                 "data": data
              }
              
         return params
+
+    def _get_project_tree_schema(self, prod_type):
+        """Helper to return the project tree dict based on type."""
+        base_shared = {
+            "shared": { "lut": {}, "docs": {}, "reference": {} }
+        }
+        
+        if prod_type == "film":
+            tree = {
+                "film": {
+                    "{sequence}": {
+                        "{shot}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                },
+                "assets": {
+                    "{asset_type}": {
+                        "{asset_name}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                }
+            }
+        elif prod_type == "tv":
+            tree = {
+                "{episode}": {
+                    "{sequence}": {
+                        "{shot}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                },
+                "assets": {
+                    "{asset_type}": {
+                        "{asset_name}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                }
+            }
+        elif prod_type == "shots_only":
+            tree = {
+                "shots": {
+                    "{shot}": {
+                        "{task_type}": { "work": {}, "publish": {} }
+                    }
+                }
+            }
+        elif prod_type == "assets_only":
+            tree = {
+                "assets": {
+                    "{asset_type}": {
+                        "{asset_name}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                }
+            }
+        else: # Custom or fallback
+            tree = {
+                "{episode}": {
+                    "{sequence}": {
+                        "{shot}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                },
+                "film": {
+                    "{sequence}": {
+                        "{shot}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                },
+                "assets": {
+                    "{asset_type}": {
+                        "{asset_name}": {
+                            "{task_type}": { "work": {}, "publish": {} }
+                        }
+                    }
+                }
+            }
+            
+        tree.update(base_shared)
+        return tree
 
     def execute_plan(self, plan):
         self.log_section("🚀 Executing Plan")

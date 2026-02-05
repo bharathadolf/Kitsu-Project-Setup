@@ -173,36 +173,46 @@ class GenerationSummaryDialog(QDialog):
                 if 'params' in step: 
                     step['params']['name'] = new_name
                     
-                    # Update Code (Dynamic Dependency)
+                    # Update Code & Data (Dynamic Dependency)
                     node_type = step.get('type')
-                    new_code = None
+                    data = step['params'].get('data')
                     
                     if node_type == "project":
+                        # Project Code depends on Name
                         new_code = code_gen.generate_project_code(new_name)
-                    
-                    # For other entities (Episode, Sequence, Shot, Asset), 
-                    # the code follows a strict pattern (counters) and should NOT change 
-                    # just because the user edits the descriptive Name field.
+                        step['params']['code'] = new_code
                         
-                    if new_code:
-                         step['params']['code'] = new_code
-                
-                # Update Description for entities where description = Name + Code
-                # (As per user request: "changing the name column in the panel1... change description parameter")
-                if node_type in ["episode", "sequence", "shot", "asset"]:
-                     current_code = step['params'].get('code', '')
-                     # If project, code changed, we use new_code. For others, code remains mostly unless we regenerte it? 
-                     # For Episode/Seq/Shot code is usually fixed unless logic changes. 
-                     # User said "changing name field will change code at run time for project entity" 
-                     # "for other entities... change description because description is {name} and {code}"
-                     
-                     # Check if we have code
-                     if current_code:
+                        # Update Description (if it was auto-generated)
+                        # We append/replace? For now assume standard pattern.
+                        
+                        # Update DATA parameters for Project
+                        if data:
+                            data['project_code'] = new_code
+                            # root_path might be static from initial creation, but we can try to update project_path
+                            root = data.get('root_path', "")
+                            if root:
+                                data['project_path'] = f"{root}/{new_code}".replace("\\", "/")
+                            
+                    else:
+                        # For other entities, Code does NOT change with Name (User Rule).
+                        # But we must update the 'name' field inside 'data' if it exists.
+                        if data:
+                             # e.g. episode_name, sequence_name, shot_name, asset_name
+                             key_map = {
+                                 "episode": "episode_name",
+                                 "sequence": "sequence_name",
+                                 "shot": "shot_name",
+                                 "asset": "asset_name"
+                             }
+                             if node_type in key_map:
+                                 data[key_map[node_type]] = new_name
+                                 
+                    # Update Description generically if it matches pattern "{name} and {code}"
+                    # This is a bit weak but requested.
+                    current_code = step['params'].get('code', '')
+                    if current_code:
                          new_desc = f"{new_name} and {current_code}"
                          step['params']['description'] = new_desc
-                         # Also update top-level 'description' if it exists in step (though step usually flat dict or has params)
-                         # Step structure: {type, name, params: {...}}
-
                 
                 # Save the updated data back to the item to ensure persistence
                 item.setData(0, Qt.UserRole, step)
@@ -256,6 +266,11 @@ class GenerationSummaryDialog(QDialog):
         def fmt(val):
             if val is None: return "null"
             if isinstance(val, str): return f'"{val}"'
+            if isinstance(val, dict):
+                # Pretty Print Dictionary
+                import json
+                pretty = json.dumps(val, indent=4)
+                return f"<pre style='margin:0; font-family:Consolas; color:#aaa;'>{pretty}</pre>"
             return str(val)
 
         # 1. CORE (Green)

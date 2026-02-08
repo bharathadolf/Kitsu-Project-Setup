@@ -65,23 +65,8 @@ class ProjectManager:
             return
 
         # --- Step 2: Confirmation UI ---
-        # Must run on main thread. Assuming we are on main thread (which PySide usually is).
-        # Include 'manager=self' so the dialog can trigger execution and query
         dialog = GenerationSummaryDialog(plan, manager=self)
         if dialog.exec_():
-             # If user clicked "Generate" standard button (Accept), we execute here.
-             # If they clicked "Generate & Query", the dialog likely handled execution internally
-             # and then we might not need to do anything here, or we re-run?
-             # Standard "Generate" works as before (Dialog returns Accepted).
-             # "Generate & Query" might keep dialog open, or close it after. 
-             # Let's assume standard behavior is preserved for "Generate", 
-             # and "Generate & Query" does its own thing inside dialog but suppresses default accept until done?
-             # For now, let's keep this as fallback if not handled inside.
-             # But wait, if "Generate & Query" executed it, we shouldn't execute again.
-             # We will check if plan was executed. 
-             # Actually, simpler: Standard "Generate" closes dialog -> returns here -> execute.
-             # "Generate & Query" -> calls manager -> updates UI -> User eventually clicks "Close" (Cancel) or we close.
-             # If "Query" runs, we probably want to return Cancel or special code so we don't re-run.
              pass
         else:
             self.log("Operation Cancelled or Completed via Dialog.", "WARNING")
@@ -96,58 +81,66 @@ class ProjectManager:
             node_type = step['type']
             name = step['name']
             
-            # Use 'params' name as the authoritative source (it might have been edited in UI)
-            # The execution step would have used the edited name.
-            
             try:
                 entity = None
                 
-                if node_type == "project":
-                    entity = gazu.project.get_project_by_name(name)
-                    
-                elif node_type == "episode":
-                    # Need project context (which should be in params if we updated it during exec, 
-                    # but context is separate. 
-                    # Simpler is to use the context from execution if we stored it?
-                    # The plan steps are independent dicts. 
-                    # Execution logic maintains a 'context' dict.
-                    # We need that context here to query efficiently, OR just search globally/by project if possible.
-                    
-                    # Episodes are unique by project.
-                    # We can try to find the project from plan? Recursion?
-                    # Let's assume project name is available in params or we search.
-                    
-                    # For now, let's try a best effort search or find parent project in plan.
-                    project = self._find_project_in_plan(plan)
-                    if project:
-                        proj_entity = gazu.project.get_project_by_name(project['name'])
-                        if proj_entity:
-                             entity = gazu.shot.get_episode_by_name(proj_entity, name)
+                # Priority 1: Use ID from just-executed creation
+                created = step.get('created_entity')
+                existing_data = step.get('fetched_data')
                 
-                elif node_type == "sequence":
-                     project = self._find_project_in_plan(plan)
-                     if project:
-                         proj_entity = gazu.project.get_project_by_name(project['name'])
-                         if proj_entity:
-                             # Try to get sequence directly from project
-                             entity = gazu.shot.get_sequence_by_name(proj_entity, name)
-
-                elif node_type == "shot":
-                     # To find a shot, we technically need project + sequence.
-                     # But gazu.shot.get_shot_by_name might allow searching or we iterate.
-                     # Actually, gazu usually needs sequence.
-                     pass 
-                     # This implementation might be tricky without fuller context preservation.
-                     # ALTERNATIVE: During 'execute_plan', we can SAVE the result entity into the plan!
-                     # That is much smarter. Update execute_plan to save entity to step.
-            
+                target_id = None
+                if created:
+                    target_id = created.get('id')
+                    self.log(f"   [DEBUG] Found 'created_entity' for {name}. ID: {target_id}", "DEBUG")
+                elif existing_data:
+                    target_id = existing_data.get('id')
+                
+                if target_id:
+                     self.log(f"   [DEBUG] Fetching {node_type} {name} via ID {target_id}...", "DEBUG")
+                     if node_type == "project": entity = gazu.project.get_project(target_id)
+                     elif node_type == "episode": entity = gazu.shot.get_episode(target_id)
+                     elif node_type == "sequence": entity = gazu.shot.get_sequence(target_id)
+                     elif node_type == "shot": entity = gazu.shot.get_shot(target_id)
+                     elif node_type == "asset": entity = gazu.asset.get_asset(target_id)
+                     elif node_type == "asset_type": entity = gazu.asset.get_asset_type(target_id)
+                     elif node_type == "task": entity = gazu.task.get_task(target_id)
+                     
+                else:
+                    self.log(f"   [DEBUG] No ID for {name}. Fallback to Name lookup.", "DEBUG")
+                    # Fallback to Name-based lookup if ID missing
+                    if node_type == "project":
+                        entity = gazu.project.get_project_by_name(name)
+                        
+                    elif node_type == "episode":
+                        project = self._find_project_in_plan(plan)
+                        if project:
+                            proj_entity = gazu.project.get_project_by_name(project['name'])
+                            if proj_entity:
+                                 entity = gazu.shot.get_episode_by_name(proj_entity, name)
+                    
+                    elif node_type == "sequence":
+                         project_data = self._find_project_in_plan(plan)
+                         if project_data:
+                             proj_entity = gazu.project.get_project_by_name(project_data['name'])
+                             if proj_entity:
+                                 entity = gazu.shot.get_sequence_by_name(proj_entity, name)
+    
+                    elif node_type == "shot":
+                         pass 
+                
+                if entity:
+                     step['fetched_data'] = entity
+                     self.log(f"   Refreshed: {name} (ID: {entity.get('id')})", "SUCCESS")
+                else:
+                     self.log(f"   Could not fetch data for: {name}", "WARNING")
+                
             except Exception as e:
                 self.log(f"Fetch Error {name}: {e}", "ERROR")
 
     def _find_project_in_plan(self, plan):
         for step in plan:
             if step['type'] == 'project':
-                return step
+                return step['params'] if 'params' in step else None
         return None
 
     def build_plan(self, item, tree_widget, hierarchy=True):
@@ -167,7 +160,7 @@ class ProjectManager:
             "existing": {
                 "episodes": [],
                 "sequences": [],
-                "shots": [] # Tricky to cache all, maybe fetch per sequence? 
+                "shots": [] 
             },
             "parent_code": None, # Code of the parent entity
             "parent_type": None
@@ -181,7 +174,6 @@ class ProjectManager:
             
         if self.connected and project_name:
             try:
-                # This blocks UI, but necessary for accurate codes
                 proj = gazu.project.get_project_by_name(project_name)
                 if proj:
                      self.log(f"Fetching existing codes for {project_name}...", "INFO")
@@ -212,6 +204,7 @@ class ProjectManager:
             if root_type == "project":
                 child_context['project_path'] = root_data.get('project_path')
                 child_context['project_code'] = root_data.get('project_code')
+                child_context['production_type'] = root_data.get('production_type', 'short')
             
             if hierarchy:
                 self._collect_children(item, tree_widget, plan, child_context)
@@ -250,22 +243,12 @@ class ProjectManager:
                     branch_context['sequence_path'] = data_params.get('sequence_path')
                     branch_context['sequence_code'] = data_params.get('sequence_code')
                 elif current_type == "asset_type":
-                     # Special case: Asset Type has no 'data' param, but we need to pass path to children
-                     # We need to calculate it here if it wasn't in data
-                     root_path = context.get('root_path', "E:/Termina") # Fallback
-                     project_code = context.get('project_code', "")
-                     # Asset type path usually: {root}/{proj}/assets/{asset_type_short_name}
-                     # We need the asset type code/name.
-                     at_name = step['name'].lower().replace(" ", "") # simple slugify
-                     # We assume standard structure for now or derived?
-                     # Let's try to get it from params if we put it there distinct from 'data'
-                     # But _resolve_params for asset_type returns minimal dict.
-                     
-                     # Let's calculate it here for context:
+                     # Special logic to calculate Asset Type Path if not in data
                      proj_path = context.get('project_path', "")
+                     at_name = step['name'].lower().replace(" ", "")
                      if proj_path:
                          branch_context['asset_type_path'] = f"{proj_path}/assets/{at_name}"
-                         branch_context['asset_type_name'] = at_name
+                     branch_context['asset_type_name'] = at_name
                 
                 # If we just entered a Sequence, reset shot counter in the branch context
                 if current_type == "sequence":
@@ -309,6 +292,7 @@ class ProjectManager:
         sequence_code = context.get('sequence_code', "")
         asset_type_path = context.get('asset_type_path', "")
         
+        production_type = context.get('production_type', "short")
         parent_type = context.get('parent_type')
         
         # Initialize Base Params with Name
@@ -326,17 +310,20 @@ class ProjectManager:
             prod_type = props.get("production_type", "short")
             root_path = props.get("root_path", "E:/Termina")
             
-            proj_path_val = f"{root_path}/{code}".replace("\\", "/")
+            project_code_data = code.lower()
+            proj_path_val = f"{root_path}/{project_code_data}".replace("\\", "/")
             
-            # Generate Project Tree
             proj_tree = self._get_project_tree_schema(prod_type)
             
             data = {
                 "root_path": root_path,
-                "project_code": code,
+                "project_code": project_code_data,
                 "project_path": proj_path_val,
                 "production_type": prod_type,
-                "project_tree": proj_tree
+                "project_tree": proj_tree,
+                "RV_MAP": {
+                    project_code_data: proj_path_val
+                }
             }
             
             params.update({
@@ -348,29 +335,25 @@ class ProjectManager:
                 "file_tree": props.get("file_tree")
             })
             
-            # Additional Optional Params
             for k in ["fps", "ratio", "resolution", "start_date", "end_date"]:
                 if props.get(f"use_{k}"): params[k] = props.get(k)
-                elif props.get(k): params[k] = props.get(k) # Fallback if direct key
+                elif props.get(k): params[k] = props.get(k)
             
-            self.log(f"Generated Data for Project '{name}': {list(data.keys())}", "INFO")
             return params
             
         elif node_type == "episode":
-            # ep{n:02}
             count = counters["episode"]
             code = code_gen.generate_incremental_code("ep", existing_codes.get("episodes", []), count)
-            counters["episode"] += 1 # Increment global counter
+            counters["episode"] += 1 
             
-            # Episode Data logic
-            # "episode_tree": derived from TV/Custom logic
-            ep_path_val = f"{project_path}/{code}".replace("\\", "/") if project_path else ""
+            ep_code_data = name.lower()
+            ep_path_val = f"{project_path}/{ep_code_data}".replace("\\", "/") if project_path else ""
             
             data = {
                 "project_code": project_code,
                 "project_path": project_path,
                 "parent_type": "project",
-                "episode_code": code,
+                "episode_code": ep_code_data,
                 "episode_name": name,
                 "episode_path": ep_path_val,
                 "episode_tree": {
@@ -379,10 +362,11 @@ class ProjectManager:
                             "{task_type}": { "work": {}, "publish": {} }
                         }
                     }
+                },
+                "RV_MAP": {
+                    ep_code_data: ep_path_val
                 }
             }
-            
-            self.log(f"Generated Data for Episode '{name}'", "INFO")
             
             return {
                 "name": name, 
@@ -393,27 +377,20 @@ class ProjectManager:
             }
             
         elif node_type == "sequence":
-            # seq{n:02}
             count = counters["sequence"]
             code = code_gen.generate_incremental_code("seq", existing_codes.get("sequences", []), count)
             counters["sequence"] += 1
             
-            # Sequence Data Logic
-            # Parent can be Project or Episode
-            # Determine effective parent path
             eff_parent_path = episode_path if episode_path else project_path
             eff_parent_type = "episode" if episode_path else "project"
             eff_parent_code = episode_code if episode_code else project_code
             
-            # Determine suffix for path (Film vs TV)
-            # If TV (under episode), usually just /{seq_code}
-            # If Film (under project), usually /film/{seq_code} ?? 
-            # User request said: "Derived: {parent_path}/film/{sequence_code} or {parent_path}/{sequence_code}"
-            # Let's assume standard APPEND for now unless we know it's film. 
-            # We don't have 'production_type' here easily unless we passed it.
-            # Assuming standard structure:
+            seq_code_data = name.lower()
             
-            seq_path_val = f"{eff_parent_path}/{code}".replace("\\", "/")
+            if eff_parent_type == "project" and production_type == "film":
+                 seq_path_val = f"{eff_parent_path}/film/{seq_code_data}".replace("\\", "/")
+            else:
+                 seq_path_val = f"{eff_parent_path}/{seq_code_data}".replace("\\", "/")
             
             data = {
                 "project_code": project_code,
@@ -421,18 +398,19 @@ class ProjectManager:
                 "parent_code": eff_parent_code,
                 "parent_path": eff_parent_path,
                 "parent_type": eff_parent_type,
-                "sequence_code": code,
+                "sequence_code": seq_code_data,
                 "sequence_name": name,
                 "sequence_path": seq_path_val,
                 "sequence_tree": {
                     "{shot}": {
                         "{task_type}": { "work": {}, "publish": {} }
                     }
+                },
+                "RV_MAP": {
+                    seq_code_data: seq_path_val
                 }
             }
             
-            self.log(f"Generated Data for Sequence '{name}'", "INFO")
-
             return {
                 "name": name, 
                 "code": code, 
@@ -443,19 +421,17 @@ class ProjectManager:
             }
             
         elif node_type == "shot":
-            # {seq_code}_sh{n:02}
-            # Need sequence code. 
             if sequence_code:
                 seq_code_ref = sequence_code
             else:
-                seq_code_ref = "seqXX" # Fallback
+                seq_code_ref = "seqXX" 
                 
             count = counters["shot"]
-            code = code_gen.generate_shot_code(seq_code_ref, count + 1) # shots start at 1
+            code = code_gen.generate_shot_code(seq_code_ref, count + 1)
             counters["shot"] += 1
             
-            # Shot Data Logic
-            shot_path_val = f"{sequence_path}/{code}".replace("\\", "/") if sequence_path else ""
+            shot_code_data = name.lower()
+            shot_path_val = f"{sequence_path}/{shot_code_data}".replace("\\", "/") if sequence_path else ""
             
             data = {
                 "project_code": project_code,
@@ -463,16 +439,17 @@ class ProjectManager:
                 "sequence_code": seq_code_ref,
                 "sequence_path": sequence_path,
                 "parent_type": "sequence",
-                "shot_code": code,
+                "shot_code": shot_code_data,
                 "shot_name": name,
                 "shot_path": shot_path_val,
                 "shot_tree": {
                     "{task_type}": { "work": {}, "publish": {} }
+                },
+                "RV_MAP": {
+                    shot_code_data: shot_path_val
                 }
             }
             
-            self.log(f"Generated Data for Shot '{name}'", "INFO")
-
             return {
                 "name": name,
                 "code": code,
@@ -487,20 +464,14 @@ class ProjectManager:
             }
             
         elif node_type == "asset_type":
-             # Asset Type has NO data parameter as per user request.
-             self.log(f"Processed Asset Type '{name}' (No Data Params)", "INFO")
              return {"name": name}
              
         elif node_type == "asset":
-             # {asset_type}_{asset_name} -> actually {code}
-             # We need asset_type_name or similar. 
              at_name = context.get('asset_type_name', "asset")
-             
              code = code_gen.generate_asset_code(at_name, name) 
              
-             # Asset Data Logic
-             # Parent is Asset Type
-             asset_path_val = f"{asset_type_path}/{code}".replace("\\", "/") if asset_type_path else ""
+             asset_code_data = name.lower()
+             asset_path_val = f"{asset_type_path}/{asset_code_data}".replace("\\", "/") if asset_type_path else ""
              
              data = {
                 "project_code": project_code,
@@ -508,15 +479,16 @@ class ProjectManager:
                 "asset_type": at_name,
                 "asset_type_path": asset_type_path,
                 "parent_type": "asset_type",
-                "asset_code": code,
+                "asset_code": asset_code_data,
                 "asset_name": name,
                 "asset_path": asset_path_val,
                 "asset_tree": {
                     "{task_type}": { "work": {}, "publish": {} }
+                },
+                "RV_MAP": {
+                    asset_code_data: asset_path_val
                 }
              }
-
-             self.log(f"Generated Data for Asset '{name}'", "INFO")
 
              return {
                  "name": name,
@@ -615,246 +587,251 @@ class ProjectManager:
         tree.update(base_shared)
         return tree
 
+    def sanity_check_project(self, name):
+        """Pre-flight check to prevent failures."""
+        if not self.connected:
+            if not self.connect():
+                return False, "Could not connect to Kitsu."
+        
+        try:
+            existing = gazu.project.get_project_by_name(name)
+            if existing:
+                return False, f"Project '{name}' already exists in Kitsu."
+        except Exception as e:
+            return False, f"Gazu Error during check: {e}"
+            
+        return True, "Sanity Check Passed"
+
     def execute_plan(self, plan):
         self.log_section("🚀 Executing Plan")
-        context = {} 
-        success_count = 0
-        created_project_name = None
         
-        for step in plan:
-            node_type = step['type']
-            name = step['name']
-            ui_params = step['params']
+        if not plan:
+            self.log("Empty Plan", "WARNING")
+            return
             
+        project_step = plan[0]
+        if project_step['type'] != 'project':
+            self.log("Plan invalid: First item must be Project.", "ERROR")
+            return
+            
+        # --- PHASE 1: PROJECT ---
+        try:
+            self.log(f"--- PHASE 1: PROJECT ---", "INFO")
+            proj_name = project_step['name']
+            proj_params = project_step['params']
+            
+            # 1. Create/Get
+            self.log(f"Creating Project '{proj_name}'...", "INFO")
+            project = gazu.project.get_project_by_name(proj_name)
+            if not project:
+                project = gazu.project.new_project(
+                    name=proj_name,
+                    production_type=proj_params.get('production_type', 'short'),
+                    production_style=proj_params.get('production_style', 'vfx')
+                )
+            
+            # 2. Update Code/Desc
+            self.log("Updating Project Code & Description...", "INFO")
+            updated = False
+            if proj_params.get('code'):
+                project['code'] = proj_params['code']
+                updated = True
+            if proj_params.get('description'):
+                project['description'] = proj_params['description']
+                updated = True
+            if updated:
+                gazu.project.update_project(project)
+                
+            # 3. Meta Data
+            if proj_params.get('data'):
+                self.log("Injecting Project Data...", "INFO")
+                gazu.project.update_project_data(project, data=proj_params['data'])
+                # Update local ref
+                project['data'] = proj_params['data']
+
+            # 4. Link Asset/Task Types
+            self.log("Linking Asset Types & Task Types...", "INFO")
+            defaults_ats = ["Character", "Prop", "Environment"]
+            defaults_tts = ["Modeling", "Rigging", "Lookdev", "Lighting", "Compositing"]
+            
+            final_ats = []
+            for name in defaults_ats:
+                at = gazu.asset.get_asset_type_by_name(name)
+                if not at: at = gazu.asset.new_asset_type(name)
+                final_ats.append(at)
+            
+            final_tts = []
+            for name in defaults_tts:
+                tt = gazu.task.get_task_type_by_name(name)
+                if not tt: tt = gazu.task.new_task_type(name)
+                final_tts.append(tt)
+            
+            project["asset_types"] = final_ats
+            project["task_types"] = final_tts
+            gazu.project.update_project(project)
+            
+            self.log(f"✅ Project '{proj_name}' Configured.", "SUCCESS")
+            
+            project_step['created_entity'] = project
+            if len(plan) == 1: return 
+            
+        except Exception as e:
+            self.log(f"❌ Project Creation Failed: {e}", "ERROR")
+            raise e 
+
+        # --- PHASE 2: HIERARCHY ---
+        self.log(f"--- PHASE 2: HIERARCHY ---", "INFO")
+        
+        entity_cache = { ("project", proj_name): project }
+        success_count = 0
+        
+        for step in plan[1:]:
             try:
-                entity = None
+                node_type = step['type']
+                name = step['name']
+                params = step['params']
                 
-                if node_type == "project":
-                    self.log(f"Processing Project: {name}...", "INFO")
-                    # Step 1: Create/Get with MANDATORY params
-                    entity = gazu.project.get_project_by_name(name)
-                    if not entity:
-                        entity = gazu.project.new_project(
-                            name=name,
-                            production_type=step['params'].get('production_type', 'short'),
-                            production_style=step['params'].get('production_style', '2d3d')
-                        )
-                    created_project_name = name
+                self.log(f"Processing {node_type}: {name}...", "INFO")
+                created_entity = None
+                
+                if node_type == "episode":
+                    # Mandatory: Project, Name
+                    ep_name_val = params.get('code', name).upper()
+                    if not ep_name_val: ep_name_val = name
                     
-                    # Step 2: Inject Optional Params (Code, Description)
-                    code_val = step['params'].get('code')
-                    desc_val = step['params'].get('description')
+                    created_entity = gazu.shot.new_episode(
+                        project=project,
+                        name=ep_name_val
+                    )
                     
-                    if code_val:
-                        self.log(f"adding value to code parameter in the {node_type} entity", "INFO")
-                        entity['code'] = code_val
-                        # Need to update entity dict locally if we want gazu to use it? 
-                        # Actually gazu.project.update_project takes the dict and sends it.
-                        # But we should also ensure the dict we have HAS the new value before sending?
-                        # Yes: project["code"] = ... then update_project(project)
+                    if params.get('code') or params.get('description'):
+                        if params.get('code'): created_entity['code'] = params.get('code')
+                        if params.get('description'): created_entity['description'] = params.get('description')
+                        gazu.shot.update_episode(created_entity)
                     
-                    if desc_val:
-                         self.log(f"adding value to description parameter in the {node_type} entity", "INFO")
-                         entity['description'] = desc_val
+                    if params.get('data'):
+                         gazu.shot.update_episode_data(created_entity, data=params['data'])
+                         created_entity['data'] = params['data']
+                         
+                    entity_cache[("episode", name)] = created_entity
                     
-                    if code_val or desc_val:
-                         gazu.project.update_project(entity)
-                    
-                    # Step 3: Inject Data (Metadata)
-                    data_val = step['params'].get('data')
-                    if data_val:
-                         self.log(f"adding data to 'data' parameter in the {node_type} entity", "INFO")
-                         gazu.project.update_project_data(entity, data=data_val)
-                         # Update local entity Ref
-                         entity['data'] = data_val
-
-
-                elif node_type == "episode":
-                    proj = context.get("project")
-                    if proj: 
-                        # Step 1: Create
-                        entity = gazu.shot.get_episode_by_name(proj, name)
-                        if not entity:
-                            entity = gazu.shot.new_episode(project=proj, name=name)
-                        
-                        # Step 2: Code/Desc
-                        code_val = step['params'].get('code')
-                        desc_val = step['params'].get('description')
-                        
-                        updated = False
-                        if code_val: 
-                            self.log(f"adding value to code parameter in the {node_type} entity", "INFO")
-                            entity['code'] = code_val; updated = True
-                        if desc_val:
-                            self.log(f"adding value to description parameter in the {node_type} entity", "INFO")
-                            entity['description'] = desc_val; updated = True
-                            
-                        if updated:
-                            # gazu.shot.update_episode(episode)
-                            gazu.shot.update_episode(entity)
-                            
-                        # Step 3: Data
-                        data_val = step['params'].get('data')
-                        if data_val:
-                            self.log(f"adding data to 'data' parameter in the {node_type} entity", "INFO")
-                            gazu.shot.update_episode_data(entity, data=data_val)
-                            entity['data'] = data_val
-                            
-                    else: self.log(f"⚠️ Skipping Episode '{name}': Missing Project context.", "ERROR")
-
                 elif node_type == "sequence":
-                    proj = context.get("project")
-                    ep = context.get("episode") # Can be none if preset doesn't use episodes
-                    if proj: 
-                        entity = gazu.shot.get_sequence_by_name(proj, name)
-                        if not entity:
-                             # new_sequence may require episode?
-                             # gazu.shot.new_sequence(project, name, episode=None)
-                             entity = gazu.shot.new_sequence(project=proj, name=name, episode=ep)
+                    # Find Parent Episode (Scan backwards in plan)
+                    idx = plan.index(step)
+                    parent_ep_obj = None
+                    if project.get('production_type') == 'tv_show':
+                        for i in range(idx-1, -1, -1):
+                            if plan[i]['type'] == 'episode':
+                                parent_ep_obj = plan[i].get('created_entity')
+                                break
+                    
+                    created_entity = gazu.shot.new_sequence(
+                        project=project,
+                        name=name,
+                        episode=parent_ep_obj
+                    )
+                    
+                    if params.get('code') or params.get('description'):
+                        if params.get('code'): created_entity['code'] = params.get('code')
+                        if params.get('description'): created_entity['description'] = params.get('description')
+                        gazu.shot.update_sequence(created_entity)
+                    
+                    if params.get('data'):
+                        gazu.shot.update_sequence_data(created_entity, data=params['data'])
                         
-                        # Update Code/Desc
-                        updated = False
-                        if step['params'].get('code'): 
-                             self.log(f"adding value to code parameter in the {node_type} entity", "INFO")
-                             entity['code'] = step['params']['code']; updated=True
-                        if step['params'].get('description'):
-                             self.log(f"adding value to description parameter in the {node_type} entity", "INFO")
-                             entity['description'] = step['params']['description']; updated=True
-                        
-                        if updated: gazu.shot.update_sequence(entity)
-                        
-                        # Update Data
-                        if step['params'].get('data'):
-                             self.log(f"adding data to 'data' parameter in the {node_type} entity", "INFO")
-                             gazu.shot.update_sequence_data(entity, data=step['params']['data'])
-                             entity['data'] = step['params']['data']
-                             
-                    else: self.log(f"⚠️ Skipping Sequence '{name}': Missing Project.", "ERROR")
-                
+                    entity_cache[("sequence", name)] = created_entity
+
                 elif node_type == "shot":
-                     proj = context.get("project")
-                     seq = context.get("sequence")
-                     if proj and seq:
-                          # Check existence? gazu.shot.get_shot_by_name(sequence, name)?
-                          # Usually we might not check for shots as they are many. Assume Create/Get.
-                          # But get_or_create_shot checked.
-                          # Let's try creation directly, catch if exists? Gazu usually errors or returns.
-                          # new_shot(project, sequence, name, frame_in=None, frame_out=None)
-                          
-                          # We try to get it first?
-                          # existing_shots = gazu.shot.all_shots_for_sequence(seq) ... slow?
-                          # Let's trust new_shot usually returns validation error if exists or we handle it.
-                          # Better: try new_shot.
-                          try:
-                              params_in = {
-                                  "project": proj,
-                                  "sequence": seq,
-                                  "name": name,
-                                  "frame_in": step['params'].get("frame_in"),
-                                  "frame_out": step['params'].get("frame_out"),
-                                  "nb_frames": step['params'].get("nb_frames")
-                              }
-                              entity = gazu.shot.new_shot(**params_in)
-                          except Exception:
-                              # Assume exists?
-                              # Try fetch?
-                              pass 
-                          
-                          if not entity:
-                               # Fallback fetch?
-                               # Actually gazu.shot.get_shot_by_name uses sequence.
-                               entity = gazu.shot.get_shot_by_name(seq, name)
-                               
-                          if entity:
-                              # Update Code/Desc
-                              updated = False
-                              if step['params'].get('code'): 
-                                  self.log(f"adding value to code parameter in the {node_type} entity", "INFO")
-                                  entity['code'] = step['params']['code']; updated=True
-                              if step['params'].get('description'):
-                                  self.log(f"adding value to description parameter in the {node_type} entity", "INFO")
-                                  entity['description'] = step['params']['description']; updated=True
-                              
-                              if updated: gazu.shot.update_shot(entity)
-                              
-                              # Update Data
-                              tasks_val = step['params'].get('tasks') # Special for shot?
-                              # Data
-                              data_val = step['params'].get('data') or {}
-                              # Merge tasks? User script didn't mention tasks in data update, but 'data' dict.
-                              if data_val:
-                                  self.log(f"adding data to 'data' parameter in the {node_type} entity", "INFO")
-                                  gazu.shot.update_shot_data(entity, data=data_val)
-                                  entity['data'] = data_val
+                    # Find Parent Sequence (Scan backwards)
+                    idx = plan.index(step)
+                    parent_seq_obj = None
+                    for i in range(idx-1, -1, -1):
+                        if plan[i]['type'] == 'sequence':
+                            parent_seq_obj = plan[i].get('created_entity')
+                            break
+                    
+                    if parent_seq_obj:
+                        created_entity = gazu.shot.new_shot(
+                            project=project,
+                            sequence=parent_seq_obj,
+                            name=name,
+                            frame_in=params.get("frame_in"),
+                            frame_out=params.get("frame_out"),
+                            nb_frames=params.get("nb_frames")
+                        )
+                        
+                        if params.get('code') or params.get('description'):
+                            if params.get('code'): created_entity['code'] = params.get('code')
+                            if params.get('description'): created_entity['description'] = params.get('description')
+                            gazu.shot.update_shot(created_entity)
+                        
+                        if params.get('data'):
+                             gazu.shot.update_shot_data(created_entity, data=params['data'])
+                    else:
+                        self.log(f"⚠️ Skipping Shot '{name}': No Parent Sequence.", "WARNING")
 
                 elif node_type == "asset_type":
-                    entity = get_or_create_asset_type(name) # Keep this simple
-                    
+                     at = gazu.asset.get_asset_type_by_name(name)
+                     if not at: at = gazu.asset.new_asset_type(name)
+                     entity_cache[("asset_type", name)] = at
+                     created_entity = at
+                     
                 elif node_type == "asset":
-                    proj = context.get("project")
-                    at = context.get("asset_type") # Asset type entity
-                    if proj and at:
-                        # gazu.asset.new_asset(project, asset_type, name)
-                        # Check exist?
-                        # entity = gazu.asset.get_asset_by_name(project, name) -> needs keys?
-                        # gazu.asset.get_asset_by_name(project, name)
-                        entity = gazu.asset.get_asset_by_name(proj, name)
-                        if not entity:
-                            entity = gazu.asset.new_asset(project=proj, asset_type=at, name=name)
-                        
-                        # Update Code/Desc
-                        updated = False
-                        if step['params'].get('code'): 
-                             self.log(f"adding value to code parameter in the {node_type} entity", "INFO")
-                             entity['code'] = step['params']['code']; updated=True
-                        if step['params'].get('description'):
-                             self.log(f"adding value to description parameter in the {node_type} entity", "INFO")
-                             entity['description'] = step['params']['description']; updated=True
-                        
-                        if updated: gazu.asset.update_asset(entity)
-                        
-                        # Update Data
-                        if step['params'].get('data'):
-                             self.log(f"adding data to 'data' parameter in the {node_type} entity", "INFO")
-                             gazu.asset.update_asset_data(entity, data=step['params']['data'])
-                             entity['data'] = step['params']['data']
+                     at_name = params.get('data', {}).get('asset_type')
+                     at_obj = None
+                     if at_name:
+                         at_obj = entity_cache.get(("asset_type", at_name))
+                         if not at_obj: list(filter(lambda x: x['type'] == 'asset_type' and x['name'] == at_name, plan))
+                         # Fallback to fetch
+                         if not at_obj: at_obj = gazu.asset.get_asset_type_by_name(at_name)
+                     
+                     if not at_obj:
+                         idx = plan.index(step)
+                         for i in range(idx-1, -1, -1):
+                             if plan[i]['type'] == 'asset_type':
+                                 at_obj = plan[i].get('created_entity')
+                                 break
+                     
+                     if at_obj:
+                         created_entity = gazu.asset.new_asset(
+                             project=project,
+                             asset_type=at_obj,
+                             name=name 
+                         )
+                         
+                         if params.get('code') or params.get('description'):
+                            if params.get('code'): created_entity['code'] = params.get('code')
+                            if params.get('description'): created_entity['description'] = params.get('description')
+                            gazu.asset.update_asset(created_entity)
 
-                if entity:
-                    self.log(f"   ✓ Processed: {node_type.capitalize()} -> {name}", "SUCCESS")
-                    # Store the live entity data back into the plan for the UI to use
-                    step['fetched_data'] = entity
-                    
-                    if node_type == "project": context["project"] = entity
-                    elif node_type == "episode": context["episode"] = entity
-                    elif node_type == "sequence": context["sequence"] = entity
-                    elif node_type == "shot": context["shot"] = entity
-                    elif node_type == "asset_type": context["asset_type"] = entity
-                    elif node_type == "asset": context["asset"] = entity
-                    success_count += 1
-                else:
-                    self.log(f"   ❌ Failed: {name}", "ERROR")
+                         if params.get('data'):
+                             gazu.asset.update_asset_data(created_entity, data=params['data'])
+                             created_entity['data'] = params['data']
+                             
+                         entity_cache[("asset", name)] = created_entity
 
+                     else:
+                          self.log(f"⚠️ Skipping Asset '{name}': No Asset Type.", "WARNING")
+                
+                if created_entity:
+                     step['created_entity'] = created_entity
+                     self.log(f"   Created {node_type}: {name}", "SUCCESS")
+                     success_count += 1
+                     
             except Exception as e:
-                self.log(f"❌ Error processing {name}: {e}", "ERROR")
-                import traceback
-                self.log(traceback.format_exc(), "DEBUG")
+                self.log(f"Failed {node_type} {name}: {e}", "ERROR")
 
         self.log_section("🏁 Execution Finished")
         self.log(f"Processed {len(plan)} items. Success: {success_count}.", "INFO")
         
-        # --- Post-Verification ---
-        if created_project_name:
-            self.verify_project_data(created_project_name)
+        if proj_name:
+            self.verify_project_data(proj_name)
             return True
-        else:
-            return False
+        return False
 
     def verify_project_data(self, project_name):
         self.log_section("🔍 Post-Creation Verification")
         try:
-            import pprint
-            
-            # 1. Fetch Project
             project = gazu.project.get_project_by_name(project_name)
             if not project:
                 self.log(f"❌ CRITICAL: Could not find project '{project_name}' in Kitsu!", "ERROR")
@@ -863,24 +840,19 @@ class ProjectManager:
             self.log(f"✅ PROJECT FOUND: {project['name']} (ID: {project['id']})", "SUCCESS")
             self.log(f"   Type: {project.get('production_type')} | Style: {project.get('production_style')}", "INFO")
             
-            # Log selected interesting fields
             data_fields = ['resolution', 'fps', 'ratio', 'start_date', 'end_date']
             data_summary = {k: project.get(k) or project.get('data', {}).get(k) for k in data_fields}
             self.log(f"   Parameters: {json.dumps(data_summary)}", "INFO")
 
-            # 2. Fetch Sequences
             sequences = gazu.shot.all_sequences_for_project(project)
             self.log(f"\n📂 SEQUENCES FOUND: {len(sequences)}", "INFO")
             
             for seq in sequences:
                 self.log(f"   ► Sequence: {seq.get('name')}", "INFO")
-                
-                # 3. Fetch Shots
                 shots = gazu.shot.all_shots_for_sequence(seq)
                 if shots:
                     self.log(f"     └── Shots ({len(shots)}):", "INFO")
                     for shot in shots:
-                        # Format nice shot info
                         fr_in = shot.get('data', {}).get('frame_in', '-')
                         fr_out = shot.get('data', {}).get('frame_out', '-')
                         self.log(f"         • {shot.get('name')} [Frames: {fr_in}-{fr_out}]", "INFO")

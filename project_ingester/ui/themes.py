@@ -101,13 +101,27 @@ class Theme:
             }}
         """
 
-    def get_node_style(self, state="base"):
+    def get_node_style(self, state="base", node_type="generic"):
         # state: base, hover, selected
         bg = self.colors['node_bg']
         border = self.colors['node_border']
         
+        # Type-specific overrides
+        type_key = f"node_bg_{node_type.lower()}"
+        if type_key in self.colors:
+            bg = self.colors[type_key]
+            # We could derive border/hover from this, but for now let's keep it simple
+            # or allow specific keys for those too.
+        
         if state == "hover":
-            bg = self.colors['node_bg_hover']
+            bg = self.colors['node_bg_hover'] # Hover overrides type color? Or simple tint?
+            # Let's make hover generic for consistency, OR tint the type color.
+            # For simplicity, let's stick to the generic hover to indicate interaction clearly,
+            # unless the user wants colored hovers. Generic gray/lighter is usually safer for selection state.
+            # User request: "colorise the nodes based on the entity category".
+            # If I hover, I still want to know it's a project. 
+            # But standard behavior is often highlighting.
+            # Let's leave generic hover for now.
             border = self.colors['node_border_hover']
         elif state == "selected":
             bg = self.colors['node_bg_sel']
@@ -176,6 +190,14 @@ DARK_THEME = Theme(
         'node_btn_bg': '#0d47a1',
         'node_btn_text': '#ffffff',
         'node_btn_hover': '#1976d2',
+        
+        # Category Colors
+        'node_bg_project': '#102027',    # Very Dark Blue/Gray
+        'node_bg_episode': '#1b5e20',    # Dark Green
+        'node_bg_sequence': '#e65100',   # Dark Orange
+        'node_bg_shot': '#4a148c',       # Dark Purple
+        'node_bg_asset_type': '#006064', # Dark Cyan
+        'node_bg_asset': '#b71c1c',      # Dark Red
     }
 )
 
@@ -214,6 +236,14 @@ LIGHT_THEME = Theme(
         'node_btn_bg': '#0078d7',
         'node_btn_text': '#ffffff',
         'node_btn_hover': '#005a9e',
+        
+        # Category Colors
+        'node_bg_project': '#E3F2FD',    # Light Blue
+        'node_bg_episode': '#E8F5E9',    # Light Green
+        'node_bg_sequence': '#FFF3E0',   # Light Orange
+        'node_bg_shot': '#F3E5F5',       # Light Purple
+        'node_bg_asset_type': '#E0F7FA', # Light Cyan
+        'node_bg_asset': '#FFEBEE',      # Light Red
     }
 )
 

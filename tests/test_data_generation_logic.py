@@ -138,16 +138,22 @@ def run_test():
         elif step['type'] == 'sequence':
              if data.get('parent_type') == 'episode': print(" [PASS] Parent Type Correct")
              if 'sequence_tree' in data: print(" [PASS] Sequence Tree Present")
-             if data.get('parent_code') == 'ep01': print(" [PASS] Parent Episode Code Correct")
+        elif step['type'] == 'sequence':
+             if data.get('parent_type') == 'episode': print(" [PASS] Parent Type Correct")
+             if 'sequence_tree' in data: print(" [PASS] Sequence Tree Present")
+             if data.get('sequence_code') == 'sq010': print(" [PASS] Sequence Code is name.lower(): sq010")
+             else: print(f" [FAIL] Sequence Code: {data.get('sequence_code')}")
              
         elif step['type'] == 'shot':
-             if data.get('shot_code') == 'seq01_sh01': print(" [PASS] Shot Code Generated: seq01_sh01")
-             else: print(f" [FAIL] Shot Code: {data.get('shot_code')}")
+             # code param is 'seq_sh01', but data['shot_code'] is 'sh010'
+             if data.get('shot_code') == 'sh010': print(" [PASS] Shot Code is name.lower(): sh010")
+             else: print(f" [FAIL] Data Shot Code: {data.get('shot_code')}")
              
         elif step['type'] == 'asset':
              if data.get('asset_type') == 'characters': print(" [PASS] Asset Type Context Correct")
              if 'asset_tree' in data: print(" [PASS] Asset Tree Present")
-             if "assets/characters" in data.get('asset_path', ''): print(f" [PASS] Asset Path: {data.get('asset_path')}")
+             if "assets/characters/herochar" in data.get('asset_path', ''): print(f" [PASS] Asset Path: {data.get('asset_path')}")
+             else: print(f" [FAIL] Asset Path: {data.get('asset_path')}")
 
 if __name__ == "__main__":
     run_test()

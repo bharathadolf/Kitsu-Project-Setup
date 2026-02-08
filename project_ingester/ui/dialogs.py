@@ -7,6 +7,7 @@ class GenerationSummaryDialog(QDialog):
         super().__init__(parent)
         self.plan = plan
         self.manager = manager
+        self.is_generated = False
         self.setWindowTitle("Confirm Generation")
         self.resize(800, 600)
         self.setup_ui()
@@ -59,19 +60,64 @@ class GenerationSummaryDialog(QDialog):
         
         self.btn_generate = QPushButton("Generate")
         self.btn_generate.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 5px 15px;")
-        self.btn_generate.clicked.connect(self.accept)
+        self.btn_generate.clicked.connect(self.on_generate)
         btn_layout.addWidget(self.btn_generate)
         
         layout.addLayout(btn_layout)
 
+    def sanity_check(self):
+        """Returns True if safe to proceed, False otherwise."""
+        if not self.plan: return False
+        
+        # Check Project Name uniqueness
+        proj_step = self.plan[0]
+        if proj_step['type'] == 'project':
+            name = proj_step['name']
+            self.status_label.setText(f"Verifying project '{name}'...")
+            QApplication.processEvents()
+            
+            valid, msg = self.manager.sanity_check_project(name)
+            if not valid:
+                self.status_label.setText(f"Error: {msg}")
+                self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+                return False
+        return True
+
+    def on_generate(self):
+        if not self.manager: return
+        
+        # 1. Sanity Check
+        if not self.sanity_check(): return
+
+        # 2. Execute
+        self.status_label.setText("Generating Project... Please wait.")
+        self.set_buttons_enabled(False)
+        QApplication.processEvents()
+        
+        try:
+            success = self.manager.execute_plan(self.plan)
+            if success:
+                self.is_generated = True
+                self.accept() # Close on success
+            else:
+                 self.status_label.setText("Generation Failed. Check Console.")
+                 self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+                 self.set_buttons_enabled(True)
+        except Exception as e:
+            self.status_label.setText(f"Error: {str(e)}")
+            self.set_buttons_enabled(True)
+
     def on_generate_query(self):
         if not self.manager: return
         
-        # 1. Execute
+        # 1. Sanity Check
+        if not self.sanity_check(): return
+        
+        # 2. Execute
         self.status_label.setText("Generating Project... Please wait.")
-        self.btn_generate.setEnabled(False)
-        self.btn_gen_query.setEnabled(False)
-        self.btn_cancel.setEnabled(False) # Temporarily lock
+        self.set_buttons_enabled(False)
+        
+        # Temporarily lock
         QApplication.processEvents() # Force UI Update
         
         try:
@@ -80,25 +126,37 @@ class GenerationSummaryDialog(QDialog):
             if not success:
                 self.status_label.setText("Generation Failed. Check Console.")
                 self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
-                self.btn_cancel.setEnabled(True)
+                self.set_buttons_enabled(True)
                 return
 
-            # 2. Query (Actually reusing data from execute_plan usually suffices if we updated it, 
-            # but explicit fetch if needed. We updated setup.py to store in 'fetched_data'.)
+            self.is_generated = True
+
+            # 3. Explicit wait
+            import time
+            time.sleep(2)
+            
+            # 4. Query (Fetch from Server)
             self.status_label.setText("Project Created. Querying Data...")
             QApplication.processEvents()
             
-            # We already have data in self.plan from execute_plan (passed by ref)
-            # But if we strictly want a separate query Step, call fetch_entity_data
-            # self.manager.fetch_entity_data(self.plan) 
+            # Save current selection index before clearing
+            current_idx = self.tree.currentIndex()
+            
+            # Force fresh fetch from server
+            self.manager.fetch_entity_data(self.plan) 
+            
+            # CRITICAL: Re-bind the updated plan data to the UI Tree
+            self.populate_tree()
+            
+            # Restore selection
+            if current_idx.isValid():
+                self.tree.setCurrentIndex(current_idx)
+                current_item = self.tree.currentItem()
+                if current_item:
+                    self.on_item_clicked(current_item, 0)
             
             self.status_label.setText("Data Fetched Successfully.")
             self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; margin-left: 10px;")
-            
-            # Refresh current view
-            current = self.tree.currentItem()
-            if current:
-                self.on_item_clicked(current, 0)
                 
             # Keep buttons disabled except Cancel (to Close)
             self.btn_cancel.setEnabled(True)
@@ -108,6 +166,12 @@ class GenerationSummaryDialog(QDialog):
             self.status_label.setText(f"Error: {str(e)}")
             self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
             self.btn_cancel.setEnabled(True)
+
+    def set_buttons_enabled(self, enabled):
+        self.btn_generate.setEnabled(enabled)
+        if hasattr(self, 'btn_gen_query'): self.btn_gen_query.setEnabled(enabled)
+        self.btn_cancel.setEnabled(True) 
+        pass
 
     def populate_tree(self):
         self.tree.blockSignals(True) # excessive signals prevent
@@ -141,8 +205,12 @@ class GenerationSummaryDialog(QDialog):
             role = step.get('role', 'Create/Update')
             item.setText(2, role)
             
-            # Make Name (Column 1) Editable for ALL entities
-            item.setFlags(item.flags() | Qt.ItemIsEditable)
+            # Make Name (Column 1) Editable for ALL entities only if NOT generated
+            if not self.is_generated:
+                item.setFlags(item.flags() | Qt.ItemIsEditable)
+            else:
+                # Remove editable flag if present (default usually isn't, but let's be safe)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             
             # Store full step data in item
             item.setData(0, Qt.UserRole, step)
@@ -165,102 +233,200 @@ class GenerationSummaryDialog(QDialog):
     def on_item_changed(self, item, column):
         if column == 1:
             new_name = item.text(column)
-            # Update the stored plan step parameters
+            # Update the stored plan step parameters (Name only first)
             step = item.data(0, Qt.UserRole)
             if step:
-                # Update Name
                 step['name'] = new_name
                 if 'params' in step: 
                     step['params']['name'] = new_name
                     
-                    # Update Code & Data (Dynamic Dependency)
-                    node_type = step.get('type')
-                    data = step['params'].get('data')
-                    
-                    if node_type == "project":
-                        # Project Code depends on Name
-                        new_code = code_gen.generate_project_code(new_name)
-                        step['params']['code'] = new_code
-                        
-                        # Update Description (if it was auto-generated)
-                        # We append/replace? For now assume standard pattern.
-                        
-                        # Update DATA parameters for Project
-                        if data:
-                            data['project_code'] = new_code
-                            # root_path might be static from initial creation, but we can try to update project_path
-                            root = data.get('root_path', "")
-                            if root:
-                                data['project_path'] = f"{root}/{new_code}".replace("\\", "/")
-                            
-                    else:
-                        # For other entities, Code does NOT change with Name (User Rule).
-                        # But we must update the 'name' field inside 'data' if it exists.
-                        if data:
-                             # e.g. episode_name, sequence_name, shot_name, asset_name
-                             key_map = {
-                                 "episode": "episode_name",
-                                 "sequence": "sequence_name",
-                                 "shot": "shot_name",
-                                 "asset": "asset_name"
-                             }
-                             if node_type in key_map:
-                                 data[key_map[node_type]] = new_name
-                                 
-                    # Update Description generically if it matches pattern "{name} and {code}"
-                    # This is a bit weak but requested.
-                    current_code = step['params'].get('code', '')
-                    if current_code:
-                         new_desc = f"{new_name} and {current_code}"
-                         step['params']['description'] = new_desc
-                
-                # Save the updated data back to the item to ensure persistence
+                # Save initial name change
                 item.setData(0, Qt.UserRole, step)
+                
+                # Trigger Recursive Update from this node down
+                self.log_update(f"Renamed {step.get('type')} to {new_name}. Recalculating dependencies...")
+                self._recursive_update(item)
+                
+                # Refresh details if currently selected
+                if self.tree.currentItem() == item:
+                     self.refresh_details(step)
 
-                # Refresh details panel to show updated params
-                self.refresh_details(step)
+    def log_update(self, msg):
+        self.status_label.setText(msg)
+        print(f" [UPDATE] {msg}")
 
+    def _recursive_update(self, item):
+        """
+        Recursively updates 'item' and all its children based on hierarchy.
+        Ensures paths and codes are strictly derived from names and parent contexts.
+        """
+        step = item.data(0, Qt.UserRole)
+        if not step: return
+
+        node_type = step.get('type')
+        params = step.get('params', {})
+        data = params.get('data')
+        
+        # 1. Update Self (Code & Path & inherited params)
+        if data:
+            parent_item = item.parent()
+            parent_step = parent_item.data(0, Qt.UserRole) if parent_item else None
+            parent_data = parent_step['params'].get('data') if parent_step else None
+            
+            # A. Inherit Context (Project Info)
+            if parent_data:
+                # Propagate Project Info
+                for key in ['project_code', 'project_path', 'production_type']:
+                    if key in parent_data:
+                        data[key] = parent_data[key]
+                
+                # Update Parent Info
+                data['parent_type'] = parent_step.get('type')
+                data['parent_code'] = parent_data.get(f"{parent_step.get('type')}_code")
+                data['parent_path'] = parent_data.get(f"{parent_step.get('type')}_path")
+            
+            # B. Update Own Code (Name-based)
+            # Project is unique: Code is generated specially OR assumes user edited it?
+            # User said: "Project Name changed -> dependent parameters change" 
+            # In previous logic: generate_project_code(name).
+            if node_type == "project":
+                new_code = code_gen.generate_project_code(params['name'])
+                params['code'] = new_code
+                data['project_code'] = new_code.lower()
+                
+                # Update Description if it matches pattern?
+                # params['description'] = f"{params['name']} and {new_code}" # User requested generic update
+                
+                # Update Project Path
+                root = data.get('root_path', "")
+                if root:
+                    data['project_path'] = f"{root}/{new_code.lower()}".replace("\\", "/")
+            
+            else:
+                # For others, internal 'code' param (e.g. ep01) technically stays incremental?
+                # User said: "dependent parameters on the asset entity should also be changed"
+                # And "Asset Type name changed -> child Asset params change"
+                # We KEEP the internal param['code'] (ID) as is (e.g. ep01), 
+                # but update the DATA code (name.lower()).
+                
+                # Update generic description
+                current_code = params.get('code', '')
+                if current_code:
+                     params['description'] = f"{params['name']} and {current_code}"
+                
+                # Update Data Code
+                name_key = f"{node_type}_name"
+                code_key = f"{node_type}_code"
+                path_key = f"{node_type}_path"
+                
+                data[name_key] = params['name']
+                data[code_key] = params['name'].lower()
+                
+                # Update Data Path
+                # Depends on Parent Path
+                # Logic for path construction:
+                
+                parent_path = data.get('project_path') # Default base
+                if parent_data:
+                     # Usually direct parent
+                     parent_path = parent_data.get(f"{parent_step.get('type')}_path")
+                
+                # Special Case: Asset under Asset Type (which has no data)
+                is_film_seq = (node_type == "sequence" and 
+                               data.get('parent_type') == "project" and 
+                               data.get('production_type') == "film")
+
+                if data.get('parent_type') == 'asset_type' or (parent_step and parent_step.get('type') == 'asset_type'):
+                     # Update Asset Type context from parent Name
+                     at_name = parent_step['name']
+                     data['asset_type'] = at_name
+                     
+                     # Re-calc paths
+                     # Need project path (should be in own data or context)
+                     proj_path = data.get('project_path', "")
+                     if proj_path:
+                         slug = at_name.lower().replace(" ", "")
+                         at_path = f"{proj_path}/assets/{slug}".replace("\\", "/")
+                         data['asset_type_path'] = at_path
+                         
+                         # Update Asset Path
+                         data[path_key] = f"{at_path}/{data[code_key]}".replace("\\", "/")
+                         
+                # Special Case: Sequence under Film Project
+                elif is_film_seq:
+                     # {project_path}/film/{sequence_code}
+                     # parent_path here is project_path
+                     data[path_key] = f"{parent_path}/film/{data[code_key]}".replace("\\", "/")
+                elif parent_path:
+                     # Standard: {parent_path}/{self_code}
+                     # Asset Logic: {asset_type_path}/{asset_code}
+                     # Asset Type Logic: {project_path}/assets/{asset_type_slug}
+                     
+                     if node_type == "asset_type":
+                          # Asset Types are usually under Project/root, but need special handling?
+                          # They are typically children of Root in tree or under "Assets" folder?
+                          # In plan, they are nodes.
+                          # Path: {project_path}/assets/{slug}
+                           proj_path = data.get('project_path')
+                           slug = params['name'].lower().replace(" ", "")
+                           data[path_key] = f"{proj_path}/assets/{slug}".replace("\\", "/")
+                     else:
+                          # Episode, Shot, Asset, Sequence(TV)
+                          data[path_key] = f"{parent_path}/{data[code_key]}".replace("\\", "/")
+        
+        # Save updates
+        item.setData(0, Qt.UserRole, step)
+        
+        # 2. Recurse Children
+        child_count = item.childCount()
+        for i in range(child_count):
+            self._recursive_update(item.child(i))
 
     def refresh_details(self, step):
         # Use fetched_data if available (from Query/Exec), else params (from Plan)
-        params = step.get('fetched_data')
+        fetched = step.get('fetched_data')
+        params = step.get('params', {}).copy() # Start with plan params
         is_fetched = False
         
-        if not params:
-             params = step.get('params', {})
-        else:
+        if fetched:
+             # Merge fetched into params, overwriting plan values with live values
+             # But keep plan values if missing in fetched?
+             # Actually, fetched object is the Source of Truth.
+             # But it might be flat (no 'data' dict if not requested?)
+             # Gazu objects usually flat properties.
+             params.update(fetched)
              is_fetched = True
              
         node_type = step.get('type')
         
-        # If fetched, we might want to convert some values or ensure format matches expected
-        # But generally display_* methods handle dicts.
-        
-        # Special handling: Add a header or note if Fetched
-        
         if node_type == "project":
-            self.display_project_details(params)
+            self.display_project_details(params, is_fetched)
         elif node_type == "sequence":
-            self.display_sequence_details(params)
+            self.display_sequence_details(params, is_fetched)
         elif node_type == "shot":
-            self.display_shot_details(params)
+            self.display_shot_details(params, is_fetched)
         elif node_type == "episode":
-            self.display_episode_details(params)
+            self.display_episode_details(params, is_fetched)
         elif node_type == "task":
-            self.display_task_details(params)
+            self.display_task_details(params, is_fetched)
         elif node_type == "asset_type":
-            self.display_asset_type_details(params)
+            self.display_asset_type_details(params, is_fetched)
         elif node_type == "asset":
-            self.display_asset_details(params)
+            self.display_asset_details(params, is_fetched)
         else:
             # Fallback
             text = json.dumps(params, indent=4)
             self.details.setText(text)
 
-    def _render_html(self, title, params, core_keys, update_keys, system_keys):
+    def _render_html(self, title, params, core_keys, update_keys, system_keys, is_fetched=False):
         """Helper to render common HTML format"""
-        html = "<html><body style='font-family:Consolas; font-size:12px; background-color:#222; color:#ddd;'>"
-        html += f"<p style='margin:0; padding:5px;'><strong>{title}</strong> (Full Schema)</p>"
+        bg_col = "#222"
+        if is_fetched:
+            title += " (LIVE DATA)"
+            bg_col = "#003300" # Explicit Green
+            
+        html = f"<html><body style='font-family:Consolas; font-size:12px; background-color:{bg_col}; color:#ddd;'>"
+        html += f"<p style='margin:0; padding:5px;'><strong>{title}</strong></p>"
         html += "<hr>"
         
         def fmt(val):
@@ -291,33 +457,51 @@ class GenerationSummaryDialog(QDialog):
         html += "</body></html>"
         self.details.setHtml(html)
 
-    def display_asset_type_details(self, params):
+    def display_asset_type_details(self, params, is_fetched=False):
         core = ["name"]
         update = ["short_name", "description", "archived"]
         system = ["id", "created_at", "updated_at", "type"]
-        self._render_html("ASSET TYPE PARAMETERS", params, core, update, system)
+        self._render_html("ASSET TYPE PARAMETERS", params, core, update, system, is_fetched)
 
-    def display_asset_details(self, params):
-        core = ["name", "entity_type_id"]
+    def display_asset_details(self, params, is_fetched=False):
+        core = ["name"]
         update = ["code", "description", "data", "status", "canceled", "nb_frames", "is_casting_standby", "is_shared"]
         system = [
             "id", "shotgun_id", "nb_entities_out", "parent_id", "source_id", "preview_file_id", 
-            "ready_for", "created_by", "created_at", "updated_at", "type", "project_id"
+            "ready_for", "created_by", "created_at", "updated_at", "type", "project_id", "entity_type_id"
         ]
-        self._render_html("ASSET PARAMETERS", params, core, update, system)
+        self._render_html("ASSET PARAMETERS", params, core, update, system, is_fetched)
 
-    def display_project_details(self, params):
+    def display_project_details(self, params, is_fetched=False):
         core = ["name", "production_type", "production_style"]
-        update = ["code", "description", "fps", "ratio", "resolution", "start_date", "end_date", "data", "file_tree", "homepage"]
+        
+        # Base update keys
+        potential_update = ["code", "description", "data", "file_tree", "homepage"]
+        
+        # Optional keys with toggles
+        optional_map = {
+            "fps": "use_fps",
+            "ratio": "use_ratio",
+            "resolution": "use_resolution",
+            "has_avatar": "use_has_avatar" 
+        }
+        
+        # Add enabled optionals
+        for key, use_flag in optional_map.items():
+            if params.get(use_flag):
+                potential_update.append(key)
+                
+        update = potential_update
+        
         system = [
-            "id", "created_at", "updated_at", "type", "project_status_id", "has_avatar", "man_days", 
+            "id", "created_at", "updated_at", "type", "project_status_id", "man_days", 
             "nb_episodes", "episode_span", "shotgun_id", "default_preview_background_file_id", 
             "from_schedule_version_id", "max_retakes", "is_clients_isolated", "is_preview_download_allowed", 
             "is_publish_default_for_artists", "is_set_preview_automated", "ld_bitrate_compression", "hd_bitrate_compression"
         ]
-        self._render_html("PROJECT PARAMETERS", params, core, update, system)
+        self._render_html("PROJECT PARAMETERS", params, core, update, system, is_fetched)
 
-    def display_sequence_details(self, params):
+    def display_sequence_details(self, params, is_fetched=False):
         core = ["name"]
         update = ["code", "description", "data"]
         system = [
@@ -327,7 +511,7 @@ class GenerationSummaryDialog(QDialog):
         ]
         self._render_html("SEQUENCE PARAMETERS", params, core, update, system)
 
-    def display_shot_details(self, params):
+    def display_shot_details(self, params, is_fetched=False):
         core = ["name", "sequence_name"]
         update = ["code", "description", "data", "frame_in", "frame_out", "nb_frames"]
         system = [
@@ -335,9 +519,9 @@ class GenerationSummaryDialog(QDialog):
             "is_shared", "preview_file_id", "ready_for", "shotgun_id", "source_id", "created_by", 
             "entity_type_id", "project_name", "nb_entities_out", "parent_id"
         ]
-        self._render_html("SHOT PARAMETERS", params, core, update, system)
+        self._render_html("SHOT PARAMETERS", params, core, update, system, is_fetched)
 
-    def display_episode_details(self, params):
+    def display_episode_details(self, params, is_fetched=False):
         core = ["name"]
         update = ["code", "description", "data"]
         system = [
@@ -345,9 +529,9 @@ class GenerationSummaryDialog(QDialog):
             "nb_entities_out", "is_casting_standby", "is_shared", "preview_file_id", "ready_for", 
             "shotgun_id", "source_id", "created_by", "entity_type_id"
         ]
-        self._render_html("EPISODE PARAMETERS", params, core, update, system)
+        self._render_html("EPISODE PARAMETERS", params, core, update, system, is_fetched)
 
-    def display_task_details(self, params):
+    def display_task_details(self, params, is_fetched=False):
         core = ["name", "task_type_name", "entity_name"]
         update = ["description", "data", "due_date", "assigner_id"]
         system = [
@@ -357,4 +541,62 @@ class GenerationSummaryDialog(QDialog):
             "task_status_id", "task_type_id", "last_comment_date", "last_preview_file_id", 
             "nb_assets_ready", "nb_drawings", "shotgun_id"
         ]
-        self._render_html("TASK PARAMETERS", params, core, update, system)
+        self._render_html("TASK PARAMETERS", params, core, update, system, is_fetched)
+
+class EntityViewerDialog(GenerationSummaryDialog):
+    def __init__(self, params, node_type, parent=None):
+        # We don't call super().__init__ because we want a different UI
+        # But we want to reuse the display methods. 
+        # So we initialize QDialog and reuse methods.
+        QDialog.__init__(self, parent)
+        self.params = params
+        self.node_type = node_type
+        self.setWindowTitle(f"Entity Viewer: {node_type.capitalize()}")
+        self.resize(500, 600)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setStyleSheet("font-family: Consolas, monospace;")
+        layout.addWidget(self.details)
+        
+        # Display Data
+        self.refresh_details()
+        
+        # Close Button
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(close_btn)
+        
+        layout.addLayout(btn_layout)
+        
+    def refresh_details(self):
+        # Delegate to the specific display methods of the parent class
+        # We can call them directly as we inherited them
+        is_fetched = True # Always treat as live fetched data for viewer
+        
+        if self.node_type == "project":
+            self.display_project_details(self.params, is_fetched)
+        elif self.node_type == "sequence":
+            self.display_sequence_details(self.params, is_fetched)
+        elif self.node_type == "shot":
+            self.display_shot_details(self.params, is_fetched)
+        elif self.node_type == "episode":
+            self.display_episode_details(self.params, is_fetched)
+        elif self.node_type == "task":
+            self.display_task_details(self.params, is_fetched)
+        elif self.node_type == "asset_type":
+            self.display_asset_type_details(self.params, is_fetched)
+        elif self.node_type == "asset":
+            self.display_asset_details(self.params, is_fetched)
+        else:
+            # Fallback
+            import json
+            text = json.dumps(self.params, indent=4)
+            self.details.setText(text)

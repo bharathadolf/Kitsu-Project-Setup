@@ -9,7 +9,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
         QPushButton, QLabel, QLineEdit, QSplitter, QFrame, QScrollArea,
         QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox, QDialog,
-        QTreeWidget, QTreeWidgetItem
+        QTreeWidget, QTreeWidgetItem, QMenu
     )
     QT_VERSION = 6
 except ImportError:
@@ -20,7 +20,7 @@ except ImportError:
         QAction, QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
         QPushButton, QLabel, QLineEdit, QSplitter, QFrame, QScrollArea,
         QFormLayout, QComboBox, QSpinBox, QTextEdit, QCheckBox, QDialog,
-        QTreeWidget, QTreeWidgetItem
+        QTreeWidget, QTreeWidgetItem, QMenu
     )
     QT_VERSION = 2
 

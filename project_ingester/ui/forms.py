@@ -1,3 +1,7 @@
+import os
+import re
+import random
+import string
 from datetime import datetime, timedelta
 from ..utils.compat import *
 from ..config import *
@@ -282,29 +286,21 @@ class ProjectForm(EntityForm):
 
         # --- Optional Fields (Collapsible with Checkboxes) ---
         
+        # Master Checkbox
+        self.master_cb = QCheckBox("Enable All Optional Properties")
+        self.master_cb.setTristate(False)
+        self.master_cb.toggled.connect(self.on_master_toggled)
+        layout.addRow(self.master_cb)
+        
         collapsible = CollapsibleBox("Optional Properties")
         layout.addRow(collapsible)
+        
+        self.optional_toggles = []
         
         # Helper to add toggleable row
         self.add_optional_row(collapsible, "FPS:", "fps", QSpinBox(), 24, lambda w, v: w.setValue(int(v)))
         self.add_optional_row(collapsible, "Ratio:", "ratio", QLineEdit(), "1.78")
         self.add_optional_row(collapsible, "Resolution:", "resolution", QLineEdit(), "1920x1080")
-        
-        # Start Date
-        start_date_widget = QtWidgets.QDateEdit()
-        start_date_widget.setCalendarPopup(True)
-        start_date_widget.setDisplayFormat("yyyy-MM-dd")
-        self.add_optional_row(collapsible, "Start Date:", "start_date", start_date_widget, datetime.now().strftime("%Y-%m-%d"), 
-                              lambda w, v: w.setDate(QtCore.QDate.fromString(v, "yyyy-MM-dd") if v else QtCore.QDate.currentDate()),
-                              lambda w: w.date().toString("yyyy-MM-dd"))
-
-        # End Date
-        end_date_widget = QtWidgets.QDateEdit()
-        end_date_widget.setCalendarPopup(True)
-        end_date_widget.setDisplayFormat("yyyy-MM-dd")
-        self.add_optional_row(collapsible, "End Date:", "end_date", end_date_widget, (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-                              lambda w, v: w.setDate(QtCore.QDate.fromString(v, "yyyy-MM-dd") if v else QtCore.QDate.currentDate()),
-                              lambda w: w.date().toString("yyyy-MM-dd"))
         
         self.add_optional_row(collapsible, "Has Avatar:", "has_avatar", QCheckBox(), False, lambda w, v: w.setChecked(bool(v)), lambda w: w.isChecked())
 
@@ -326,6 +322,10 @@ class ProjectForm(EntityForm):
         checkbox = QCheckBox()
         checkbox.setChecked(is_enabled)
         checkbox.setFixedSize(20, 20)
+        
+        # Track for master toggle
+        if not hasattr(self, 'optional_toggles'): self.optional_toggles = []
+        self.optional_toggles.append(checkbox)
         
         # Widget Setup
         widget.setEnabled(is_enabled)
@@ -368,6 +368,10 @@ class ProjectForm(EntityForm):
     def on_optional_toggled(self, checked, key, widget):
         self.node_frame.properties[f"use_{key}"] = checked
         widget.setEnabled(checked)
+        
+    def on_master_toggled(self, checked):
+        for cb in self.optional_toggles:
+            cb.setChecked(checked)
 
 
 
@@ -419,6 +423,7 @@ class ProjectForm(EntityForm):
             self.root_path_edit.setText(path)
 
     def on_root_path_changed(self, text):
+        self.node_frame.properties["root_path"] = text
         # Update Data Param because Root Path changed
         self.update_data_param()
 
@@ -482,19 +487,25 @@ class ShotForm(EntityForm):
         
         frame_in = QSpinBox()
         frame_in.setRange(-999999, 999999)
-        frame_in.setValue(int(self.node_frame.properties.get("frame_in", 1001)))
+        fi_val = self.node_frame.properties.get("frame_in")
+        if fi_val is None: fi_val = 1001
+        frame_in.setValue(int(fi_val))
         frame_in.valueChanged.connect(lambda v: self.on_prop_changed("frame_in", v))
         collapsible.addRow("Frame In:", frame_in)
         
         frame_out = QSpinBox()
         frame_out.setRange(-999999, 999999)
-        frame_out.setValue(int(self.node_frame.properties.get("frame_out", 1100)))
+        fo_val = self.node_frame.properties.get("frame_out")
+        if fo_val is None: fo_val = 1100
+        frame_out.setValue(int(fo_val))
         frame_out.valueChanged.connect(lambda v: self.on_prop_changed("frame_out", v))
         collapsible.addRow("Frame Out:", frame_out)
         
         nb_frames = QSpinBox()
         nb_frames.setRange(0, 999999)
-        nb_frames.setValue(int(self.node_frame.properties.get("nb_frames", 100)))
+        nb_val = self.node_frame.properties.get("nb_frames")
+        if nb_val is None: nb_val = 100
+        nb_frames.setValue(int(nb_val))
         nb_frames.valueChanged.connect(lambda v: self.on_prop_changed("nb_frames", v))
         collapsible.addRow("Nb Frames:", nb_frames)
         

@@ -20,6 +20,8 @@ from .console import ConsoleWidget
 
 from .themes import DARK_THEME, get_next_theme
 from ..kitsu_config import gazu, KITSU_HOST, KITSU_EMAIL, KITSU_PASSWORD
+from ..core.loader import ProjectLoader
+from .dialogs import EntityViewerDialog
 
 
 class MainWindow(QMainWindow):
@@ -29,11 +31,12 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(self.windowFlags() | Qt.Window)
         self.current_theme = DARK_THEME
         self.setup_ui()
+        self.loader = ProjectLoader(log_callback=self.console.log)
         self.apply_theme(self.current_theme)
         
     def setup_ui(self):
         self.setWindowTitle("Project Ingester")
-        self.setGeometry(100, 100, 1019, 669)
+        self.setGeometry(100, 100, 908, 534)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -73,7 +76,7 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(self.project_panel)
         self.splitter.addWidget(self.properties_panel)
         self.splitter.addWidget(console_container)
-        self.splitter.setSizes([307, 321, 371])
+        self.splitter.setSizes([286, 270, 334])
         self.splitter.setChildrenCollapsible(True)
         self.splitter.splitterMoved.connect(self.update_panel_sizes)
         main_layout.addWidget(self.splitter)
@@ -117,6 +120,7 @@ class MainWindow(QMainWindow):
         self.console.log("Application started successfully", "SUCCESS")
         self.apply_template("Custom")
         self.project_panel.node_selected.connect(self.properties_panel.load_nodes)
+        self.project_panel.viewer_requested.connect(self.on_viewer_requested)
         
         self.project_panel.log_message.connect(self.console.log)
         self.properties_panel.log_message.connect(self.console.log)
@@ -156,6 +160,11 @@ class MainWindow(QMainWindow):
             template_menu.addAction(action)
 
         view_menu.addSeparator()
+        
+        # Load Project Submenu
+        self.load_project_menu = view_menu.addMenu("Load Project")
+        self.load_project_menu.aboutToShow.connect(self.populate_projects_menu)
+
         connect_action = QAction("Connect", self)
         connect_action.triggered.connect(self.connect_kitsu)
         view_menu.addAction(connect_action)
@@ -204,3 +213,91 @@ class MainWindow(QMainWindow):
             self.console.log(f"❌ Connection failed: {str(e)}", "ERROR")
             self.status_light.setStyleSheet("background-color: #FF0000; border-radius: 10px; border: 2px solid #333;")
             self.status_light.setToolTip(f"Status: Connection Failed ({str(e)})")
+
+    def populate_projects_menu(self):
+        self.load_project_menu.clear()
+        
+        # Try to connect if not already
+        if not self.loader.connect():
+             action = QAction("Connect to Kitsu first", self)
+             action.setEnabled(False)
+             self.load_project_menu.addAction(action)
+             return
+             
+        projects = self.loader.get_all_projects()
+        if not projects:
+             action = QAction("No projects found", self)
+             action.setEnabled(False)
+             self.load_project_menu.addAction(action)
+             return
+
+        for p in projects:
+             action = QAction(p['name'], self)
+             # Use default argument binding to capture loop variable
+             action.triggered.connect(lambda checked=False, pid=p['id']: self.load_project_action(pid))
+             self.load_project_menu.addAction(action)
+
+    def load_project_action(self, project_id):
+        self.console.log(f"Starting load for project ID: {project_id}...", "INFO")
+        data = self.loader.load_full_project(project_id)
+        if data:
+             self.rebuild_tree_from_data(data)
+
+    def rebuild_tree_from_data(self, data):
+        self.project_panel.tree.clear()
+        
+        # 1. Update Watermark
+        prod_type = data.get('production_type', 'TV Show') # Default
+        self.project_panel.tree.watermark_text = prod_type
+        self.project_panel.tree.viewport().update()
+        
+        # 2. Update Status
+        p_name = data.get('properties', {}).get('name', 'Unknown')
+        self.project_panel.status_label.setText(f"Project Loaded: {p_name}")
+        
+        # Root is project
+        root_item = self.project_panel.add_node(None, "project", is_root=True)
+        self._apply_properties_to_node(root_item, data, is_loaded=True)
+        self.project_panel.tree.expandItem(root_item)
+        
+        self._recursive_build(root_item, data.get("children", []), is_loaded=True)
+        self.console.log("Tree reconstruction complete.", "SUCCESS")
+
+    def _recursive_build(self, parent_item, children_data, is_loaded=False):
+        for child_data in children_data:
+            node_type = child_data['type']
+            new_item = self.project_panel.add_node(parent_item, node_type)
+            self._apply_properties_to_node(new_item, child_data, is_loaded=is_loaded)
+            
+            # Recursion
+            self._recursive_build(new_item, child_data.get("children", []), is_loaded=is_loaded)
+
+    def _apply_properties_to_node(self, item, data, is_loaded=False):
+        widget = self.project_panel.tree.itemWidget(item, 0)
+        if widget and widget.node_frame:
+             props = data.get("properties", {})
+             
+             # Set Loaded Flag
+             widget.node_frame.is_loaded = is_loaded
+             
+             # Log all properties as requested
+             name = props.get("name", "Unknown")
+             type_ = data.get("type", "Unknown")
+             
+             self.console.log(f"Loading {type_}: {name}", "DEBUG")
+             widget.node_frame.properties.update(props)
+             
+             # Also update visual name
+             widget.node_frame.name_edit.setText(name)
+             
+             # Log parameters logic
+             log_lines = []
+             for k, v in props.items():
+                  log_lines.append(f"  {k}: {v}")
+             
+             if log_lines:
+                 self.console.log("\n".join(log_lines), "DEBUG")
+
+    def on_viewer_requested(self, params, node_type):
+        dialog = EntityViewerDialog(params, node_type, self)
+        dialog.exec()

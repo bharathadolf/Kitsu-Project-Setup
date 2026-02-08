@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import json
 
 from ..utils.compat import *
 from ..config import *
@@ -15,6 +16,7 @@ class NodeFrame(QFrame):
         self.node_type = node_type
         self.rules = rules or {}
         self.node_id = node_id
+        self.is_loaded = False
         
         # Default Naming Logic
         name_val = node_type.capitalize()
@@ -81,7 +83,7 @@ class NodeFrame(QFrame):
                 "production_type": "short", 
                 "start_date": datetime.now().strftime("%Y-%m-%d"),
                 "end_date": (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d"),
-                "root_path": "P:/projects/" + name_val.lower().replace(" ", "_"),
+                "root_path": "" + name_val.lower().replace(" ", "_"),
                 "production_style": "2d3d",
                 "task_template": [],
                 "asset_types": []
@@ -200,7 +202,7 @@ class NodeFrame(QFrame):
 
     def update_styles(self, theme):
         self.current_theme = theme
-        self.setStyleSheet(theme.get_node_style("selected" if self._is_selected else "base"))
+        self.setStyleSheet(theme.get_node_style("selected" if self._is_selected else "base", self.node_type))
 
     def set_delete_visible(self, visible):
         if hasattr(self, 'btn_del') and self.btn_del:
@@ -222,12 +224,12 @@ class NodeFrame(QFrame):
 
     def enterEvent(self, event):
         if not self._is_selected and self.current_theme:
-            self.setStyleSheet(self.current_theme.get_node_style("hover"))
+            self.setStyleSheet(self.current_theme.get_node_style("hover", self.node_type))
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         if not self._is_selected and self.current_theme:
-            self.setStyleSheet(self.current_theme.get_node_style("base"))
+            self.setStyleSheet(self.current_theme.get_node_style("base", self.node_type))
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
@@ -241,7 +243,7 @@ class NodeFrame(QFrame):
         self._is_selected = selected
         if self.current_theme:
             state = "selected" if selected else "base"
-            self.setStyleSheet(self.current_theme.get_node_style(state))
+            self.setStyleSheet(self.current_theme.get_node_style(state, self.node_type))
 
 class HybridNodeContainer(QWidget):
     request_add_child = Signal()
@@ -336,32 +338,47 @@ class HybridNodeContainer(QWidget):
         menu = QtWidgets.QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #555; } QMenu::item:selected { background-color: #0d47a1; }")
         
-        # Dry Run Menu
-        dry_run_menu = menu.addMenu("Dry-run")
-        
-        action_dry_sel = QAction("Selected Entity Only", self)
-        action_dry_sel.triggered.connect(lambda: self.run_dry_run(hierarchy=False))
-        dry_run_menu.addAction(action_dry_sel)
-        
-        action_dry_hier = QAction("Includes Hierarchy", self)
-        action_dry_hier.triggered.connect(lambda: self.run_dry_run(hierarchy=True))
-        dry_run_menu.addAction(action_dry_hier)
-        
-        # Generate Menu
-        gen_menu = menu.addMenu("Generate")
-        
-        action_gen_sel = QAction("Selected Entity Only", self)
-        action_gen_sel.triggered.connect(lambda: self.run_generate(hierarchy=False))
-        gen_menu.addAction(action_gen_sel)
-        
-        action_gen_hier = QAction("Includes Hierarchy", self)
-        action_gen_hier.triggered.connect(lambda: self.run_generate(hierarchy=True))
-        gen_menu.addAction(action_gen_hier)
+        if self.node_frame.is_loaded:
+            # Viewer Option
+            action_viewer = QAction("Viewer", self)
+            action_viewer.triggered.connect(self.open_viewer)
+            menu.addAction(action_viewer)
+        else:
+            # Dry Run Menu
+            dry_run_menu = menu.addMenu("Dry-run")
+            
+            action_dry_sel = QAction("Selected Entity Only", self)
+            action_dry_sel.triggered.connect(lambda: self.run_dry_run(hierarchy=False))
+            dry_run_menu.addAction(action_dry_sel)
+            
+            action_dry_hier = QAction("Includes Hierarchy", self)
+            action_dry_hier.triggered.connect(lambda: self.run_dry_run(hierarchy=True))
+            dry_run_menu.addAction(action_dry_hier)
+            
+            # Generate Menu
+            gen_menu = menu.addMenu("Generate")
+            
+            action_gen_sel = QAction("Selected Entity Only", self)
+            action_gen_sel.triggered.connect(lambda: self.run_generate(hierarchy=False))
+            gen_menu.addAction(action_gen_sel)
+            
+            action_gen_hier = QAction("Includes Hierarchy", self)
+            action_gen_hier.triggered.connect(lambda: self.run_generate(hierarchy=True))
+            gen_menu.addAction(action_gen_hier)
         
         if QT_VERSION == 6:
             menu.exec(global_pos)
         else:
             menu.exec_(global_pos)
+
+    def open_viewer(self):
+        # We need to open a dialog to show properties
+        # We can implement a simplified viewer dialog here or emit signal
+        # Let's emit a signal or call a method on tree to bubble up
+        if hasattr(self.tree, 'viewer_requested'):
+             self.tree.viewer_requested.emit(self.node_frame.properties, self.node_frame.node_type)
+        else:
+             self.log_to_console("Viewer not connected", "WARNING")
 
     def _show_background_context_menu(self, global_pos):
         menu = QtWidgets.QMenu(self)
@@ -386,6 +403,7 @@ class HybridNodeContainer(QWidget):
         if hierarchy:
             self._log_hierarchy(self.item, output_lines, level=0)
         else:
+            import json
             props = json.dumps(self.node_frame.properties, indent=4)
             output_lines.append(f"{node_name}")
             output_lines.append(f"    Properties:")
@@ -411,6 +429,7 @@ class HybridNodeContainer(QWidget):
         
         # Properties indentation (indented relative to the node name)
         prop_indent = "    " if level == 0 else ("  " * level + "    ")
+        import json
         props_str = json.dumps(widget.node_frame.properties, indent=4)
         output_lines.append(f"{prop_indent}Properties:")
         for line in props_str.split('\n'):
@@ -443,6 +462,7 @@ class VisualTree(QtWidgets.QTreeWidget):
     
     def __init__(self):
         super().__init__()
+        self.watermark_text = "Custom"
         self.current_theme = None
         self.rubberband = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Rectangle, self)
         self.origin = QPoint()
@@ -460,6 +480,9 @@ class VisualTree(QtWidgets.QTreeWidget):
         self.header().setStretchLastSection(False)
         self.header().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
         
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.on_context_menu)
+
     def set_theme(self, theme):
         self.current_theme = theme
         self.setStyleSheet(f"""
@@ -489,9 +512,6 @@ class VisualTree(QtWidgets.QTreeWidget):
         # Update all node frames
         for frame in self.get_all_node_frames():
             frame.update_styles(theme)
-
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.customContextMenuRequested.connect(self.on_context_menu)
 
     def on_context_menu(self, pos):
         item = self.itemAt(pos)
@@ -532,6 +552,7 @@ class VisualTree(QtWidgets.QTreeWidget):
             menu.exec_(global_pos)
 
     def export_structure_to_json(self):
+        import json
         data = []
         root = self.invisibleRootItem()
         for i in range(root.childCount()):
@@ -612,6 +633,24 @@ class VisualTree(QtWidgets.QTreeWidget):
             try:
                 painter.setRenderHint(QPainter.Antialiasing)
                 
+                # --- WATERMARK ---
+                if self.watermark_text:
+                    painter.save()
+                    font = QtGui.QFont("Arial", 40, QtGui.QFont.Bold)
+                    painter.setFont(font)
+                    
+                    # Color based on theme logic or fixed dim color
+                    text_color = QColor(255, 255, 255, 20) # Very faint white/gray
+                    if self.current_theme and 'Light' in self.current_theme.name:
+                         text_color = QColor(0, 0, 0, 20)
+                    
+                    painter.setPen(text_color)
+                    
+                    rect = self.viewport().rect()
+                    painter.drawText(rect, Qt.AlignCenter, self.watermark_text.upper())
+                    painter.restore()
+                # -----------------
+                
                 line_color = "#546e7a" # Fallback
                 if self.current_theme:
                     line_color = self.current_theme.colors['border']
@@ -644,32 +683,279 @@ class VisualTree(QtWidgets.QTreeWidget):
             return
         
         if hasattr(parent_w, 'node_frame'):
-            # Save state to isolate transformations etc
-            painter.save()
-            try:
-                p_frame = parent_w.node_frame
-                p_origin = p_frame.mapTo(self.viewport(), QPoint(int(p_frame.width() / 2), p_frame.height()))
-                start_point = p_origin
-                
-                c_btn = child_w.btn_expand
-                c_origin = c_btn.mapTo(self.viewport(), QPoint(0, int(c_btn.height() / 2)))
-                end_point = c_origin
-                
-                dy = end_point.y() - start_point.y()
-                dx = end_point.x() - start_point.x()
-                c1 = QPoint(start_point.x(), start_point.y() + int(dy * 0.5))
-                c2 = QPoint(end_point.x() - int(dx * 0.5), end_point.y())
+            # Logic without save/restore as we don't modify painter state
+            p_frame = parent_w.node_frame
+            p_origin = p_frame.mapTo(self.viewport(), QPoint(int(p_frame.width() / 2), p_frame.height()))
+            start_point = p_origin
+            
+            c_btn = child_w.btn_expand
+            c_origin = c_btn.mapTo(self.viewport(), QPoint(0, int(c_btn.height() / 2)))
+            end_point = c_origin
+            
+            dy = end_point.y() - start_point.y()
+            dx = end_point.x() - start_point.x()
+            c1 = QPoint(start_point.x(), start_point.y() + int(dy * 0.5))
+            c2 = QPoint(end_point.x() - int(dx * 0.5), end_point.y())
 
-                path = QPainterPath()
-                path.moveTo(start_point)
-                path.cubicTo(c1, c2, end_point)
-                painter.drawPath(path)
+            path = QPainterPath()
+            path.moveTo(start_point)
+            path.cubicTo(c1, c2, end_point)
+            painter.drawPath(path)
+
+class VisualTree(QtWidgets.QTreeWidget):
+    customItemClicked = Signal(object)
+    selectionRectRequested = Signal(object, object)
+    log_requested = Signal(str, str)
+    viewer_requested = Signal(dict, str) # params, type
+    
+    def __init__(self):
+        super().__init__()
+        self.watermark_text = "Custom"
+        self.origin = QtCore.QPoint()
+        self.rubberband = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Rectangle, self)
+        self.setUniformRowHeights(True)
+        self.setIndentation(NODE_WIDTH + 20)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setMouseTracking(True)
+        self.setRootIsDecorated(False)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.on_context_menu)
+        
+        self.current_theme = None
+
+        # Set up custom branch drawing
+        self.setAllColumnsShowFocus(True)
+        self.header().hide()
+        self.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        self.setHorizontalScrollMode(QtWidgets.QAbstractItemView.ScrollPerPixel)
+        
+        # Set up stylesheet for transparent background and no borders
+        if self.current_theme:
+            self.set_theme(self.current_theme)
+
+    def set_theme(self, theme):
+        self.current_theme = theme
+        # Set up stylesheet for transparent background and no borders
+        self.setStyleSheet(f"""
+            QTreeWidget {{
+                background: transparent;
+                border: none;
+                outline: none;
+            }}
+            QTreeWidget::item {{
+                height: {ROW_HEIGHT}px;
+                background: transparent;
+            }}
+            QTreeWidget::item:hover {{
+                background: transparent;
+            }}
+            QTreeWidget::branch {{
+                border-image: none;
+                image: none;
+                background: transparent;
+            }}
+        """)
+        # Update connection lines color
+        self.viewport().update()
+        
+        # Update all node frames
+        for frame in self.get_all_node_frames():
+            frame.update_styles(theme)
+
+    def on_context_menu(self, pos):
+        item = self.itemAt(pos)
+        if item:
+            widget = self.itemWidget(item, 0)
+            if widget and hasattr(widget, 'on_context_menu'):
+                # Delegate to widget context menu logic
+                # Map global position because on_context_menu expects relative or global?
+                # HybridNodeContainer.on_context_menu expects relative pos to widget usually if called by signal, 
+                # but let's check what it uses. It uses mapToGlobal(pos).
+                # If we pass tree relative pos, widget.mapToGlobal(pos) might be wrong if pos is not in widget coords.
+                # However, QMenu.exec usually wants Global.
+                
+                # Let's call a helper on widget that takes GLOBAL pos directly to be safe, 
+                # OR map pos from Tree to Widget.
+                
+                # Tree pos -> Global
+                global_pos = self.mapToGlobal(pos)
+                
+                # Widget expects 'pos' to be local to the widget.
+                # Wait, looking at HybridNodeContainer code:
+                #    global_pos = self.mapToGlobal(pos)
+                # It expects 'pos' to be local to the widget.
+                
+                # So we map Tree Pos -> Widget Pos
+                widget_pos = widget.mapFromGlobal(global_pos)
+                widget.on_context_menu(widget_pos)
+                return
+
+        menu = QtWidgets.QMenu(self)
+        action = QAction("Export as JSON", self)
+        action.triggered.connect(self.export_structure_to_json)
+        menu.addAction(action)
+        global_pos = self.mapToGlobal(pos)
+        if QT_VERSION == 6:
+            menu.exec(global_pos)
+        else:
+            menu.exec_(global_pos)
+
+    def export_structure_to_json(self):
+        import json
+        data = []
+        root = self.invisibleRootItem()
+        for i in range(root.childCount()):
+            child = root.child(i)
+            node_data = self._recursive_serialize(child)
+            if node_data:
+                data.append(node_data)
+        
+        filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Export JSON", "", "JSON Files (*.json)")
+        if filename:
+            try:
+                with open(filename, 'w') as f:
+                    json.dump(data, f, indent=4)
+                self.log_requested.emit(f"Exported JSON to: {filename}", "SUCCESS")
+            except Exception as e:
+                self.log_requested.emit(f"Export failed: {e}", "ERROR")
+
+    def _recursive_serialize(self, item):
+        widget = self.itemWidget(item, 0)
+        if not widget:
+            return None
+        node_data = {
+            "type": widget.node_frame.node_type,
+            "properties": widget.node_frame.properties.copy(),
+            "children": []
+        }
+        for i in range(item.childCount()):
+            child = item.child(i)
+            child_data = self._recursive_serialize(child)
+            if child_data:
+                node_data["children"].append(child_data)
+        return node_data
+
+    def drawBranches(self, painter, rect, index):
+        pass
+
+    def get_all_node_frames(self):
+        frames = []
+        iterator = QtWidgets.QTreeWidgetItemIterator(self)
+        while iterator.value():
+            item = iterator.value()
+            widget = self.itemWidget(item, 0)
+            if widget and hasattr(widget, 'node_frame'):
+                frames.append(widget.node_frame)
+            iterator += 1
+        return frames
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            pos = event.position().toPoint() if QT_VERSION >= 6 else event.pos()
+            self.origin = pos
+            self.rubberband.setGeometry(QtCore.QRect(self.origin, QSize()))
+            self.rubberband.show()
+            return 
+        if event.button() == Qt.RightButton:
+            super().mousePressEvent(event)
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not self.origin.isNull() and self.rubberband.isVisible():
+             pos = event.position().toPoint() if QT_VERSION >= 6 else event.pos()
+             self.rubberband.setGeometry(QtCore.QRect(self.origin, pos).normalized())
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self.rubberband.isVisible():
+            rect = self.rubberband.geometry()
+            self.rubberband.hide()
+            self.selectionRectRequested.emit(rect, QApplication.keyboardModifiers())
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        painter = QPainter()
+        if painter.begin(self.viewport()):
+            try:
+                painter.setRenderHint(QPainter.Antialiasing)
+                
+                # --- WATERMARK ---
+                if self.watermark_text:
+                    painter.save()
+                    font = QtGui.QFont("Arial", 40, QtGui.QFont.Bold)
+                    painter.setFont(font)
+                    
+                    # Color based on theme logic or fixed dim color
+                    text_color = QColor(255, 255, 255, 20) # Very faint white/gray
+                    if self.current_theme and 'Light' in self.current_theme.name:
+                         text_color = QColor(0, 0, 0, 20)
+                    
+                    painter.setPen(text_color)
+                    
+                    rect = self.viewport().rect()
+                    painter.drawText(rect, Qt.AlignCenter, self.watermark_text.upper())
+                    painter.restore()
+                # -----------------
+                
+                line_color = "#546e7a" # Fallback
+                if self.current_theme:
+                    line_color = self.current_theme.colors['border']
+                    
+                pen = QPen(QColor(line_color))
+                pen.setWidth(2)
+                pen.setStyle(Qt.SolidLine)
+                painter.setPen(pen)
+                
+                count = self.topLevelItemCount()
+                for i in range(count):
+                    self.draw_recursive(painter, self.topLevelItem(i))
             finally:
-                painter.restore()
+                painter.end()
+                
+    def draw_recursive(self, painter, item):
+        child_count = item.childCount()
+        for i in range(child_count):
+            child = item.child(i)
+            self.draw_connector(painter, item, child)
+            if item.isExpanded():
+                self.draw_recursive(painter, child)
+                
+    def draw_connector(self, painter, parent, child):
+        parent_w = self.itemWidget(parent, 0)
+        child_w = self.itemWidget(child, 0)
+        if not parent_w or not child_w:
+            return
+        if not child_w.isVisible():
+            return
+        
+        if hasattr(parent_w, 'node_frame'):
+            # Logic without save/restore as we don't modify painter state
+            p_frame = parent_w.node_frame
+            p_origin = p_frame.mapTo(self.viewport(), QPoint(int(p_frame.width() / 2), p_frame.height()))
+            start_point = p_origin
+            
+            c_btn = child_w.btn_expand
+            c_origin = c_btn.mapTo(self.viewport(), QPoint(0, int(c_btn.height() / 2)))
+            end_point = c_origin
+            
+            dy = end_point.y() - start_point.y()
+            dx = end_point.x() - start_point.x()
+            c1 = QPoint(start_point.x(), start_point.y() + int(dy * 0.5))
+            c2 = QPoint(end_point.x() - int(dx * 0.5), end_point.y())
+
+            path = QPainterPath()
+            path.moveTo(start_point)
+            path.cubicTo(c1, c2, end_point)
+            painter.drawPath(path)
 
 class ProjectStructureWidget(QWidget):
     node_selected = Signal(object)
     log_message = Signal(str, str)
+    viewer_requested = Signal(dict, str) # Bubble up
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -695,11 +981,20 @@ class ProjectStructureWidget(QWidget):
         self.tree = VisualTree()
         self.tree.selectionRectRequested.connect(self.on_rubberband_selection)
         self.tree.log_requested.connect(self.log_message.emit)
+        self.tree.viewer_requested.connect(self.viewer_requested.emit)
         layout.addWidget(self.tree)
+        
+        # Status Label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #888; font-style: italic; padding: 5px; background-color: #1e1e1e;")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_label)
         
     def apply_template(self, template_name):
         self.log_message.emit(f"Applied Template: {template_name}", "INFO")
         self.current_template = template_name
+        self.tree.watermark_text = template_name # Set Watermark
+        self.tree.viewport().update() # Trigger repaint
         self.tree.clear()
         rules = RULE_MAP.get(template_name, {})
         project_rules = rules.get("project", {})

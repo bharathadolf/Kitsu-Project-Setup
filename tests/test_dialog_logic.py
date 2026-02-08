@@ -34,6 +34,7 @@ def run_test():
                 "description": "OldProject and old",
                 "data": {
                     "project_code": "old",
+                    "root_path": "X:", # Added missing definition
                     "project_path": "X:/old"
                 }
             }
@@ -47,7 +48,29 @@ def run_test():
                 "description": "Episode 01 and ep01",
                 "data": {
                     "episode_name": "Episode 01",
-                    "episode_code": "ep01"
+                    "episode_code": "episode 01"
+                }
+            }
+        },
+        {
+            "type": "asset_type",
+            "name": "Characters",
+            "params": {
+                "name": "Characters"
+            }
+        },
+        {
+            "type": "asset",
+            "name": "Hero",
+            "params": {
+                "name": "Hero",
+                "code": "her",
+                "data": {
+                    "project_path": "X:/old",
+                    "asset_type": "Characters",
+                    "asset_type_path": "X:/old/assets/characters",
+                    "asset_code": "hero",
+                    "asset_path": "X:/old/assets/characters/hero"
                 }
             }
         }
@@ -55,52 +78,97 @@ def run_test():
     
     dialog = GenerationSummaryDialog(plan, manager=MockManager())
     
+    # 1.5 Fixup Hierarchy for Asset Type test (Manually parent asset under asset_type)
+    root = dialog.tree.invisibleRootItem()
+    
+    # Indices change after reparenting, so grab them all first
+    proj_item = root.child(0)
+    ep_item = root.child(1)
+    at_item = root.child(2)
+    asset_item = root.child(3)
+    
+    # Reparent Asset under AT
+    root.removeChild(asset_item)
+    at_item.addChild(asset_item)
+    
+    # Reparent Episode under Project
+    root.removeChild(ep_item)
+    proj_item.addChild(ep_item)
+    
+    
     # 2. Simulate Renaming Project
     print("\n [TEST] Renaming Project 'OldProject' -> 'NewProject'")
     
-    # Find Project Item (Row 0)
-    root = dialog.tree.invisibleRootItem()
-    proj_item = root.child(0)
-    
     # Simulate Edit
     proj_item.setText(1, "NewProject")
-    # Manually trigger on_item_changed logic since setText emits signal? 
-    # QTreeWidget.itemChanged emits when data changes. Verify if setText triggers it.
-    # Usually yes, if connected.
     
     # Verification
     step = proj_item.data(0, Qt.UserRole)
     print(f" [CHECK] New Name: {step['name']}")
-    print(f" [CHECK] New Code: {step['params']['code']}")
-    print(f" [CHECK] New Description: {step['params']['description']}")
+    print(f" [CHECK] New Code: {step['params']['code']}") 
     
     data = step['params'].get('data', {})
     print(f" [CHECK] Data.project_code: {data.get('project_code')}")
     print(f" [CHECK] Data.project_path: {data.get('project_path')}")
     
-    if step['params']['code'] == "newproject": # auto-gen code is lowercase name usually (or first 3 chars depending on logic)
-         # code_gen.generate_project_code usually returns slugified or first 3 chars. 
-         # We need to see what it actually returns.
-         pass
+    if data.get('project_code') == "newpr": 
+         print(" [PASS] Project Code updated.")
+    else:
+         print(f" [FAIL] Project Code: {data.get('project_code')}")
          
+    # Check Child (Episode) Update
+    # Use child count to be safe
+    if proj_item.childCount() > 0:
+        child_ep = proj_item.child(0)
+        ep_data = child_ep.data(0, Qt.UserRole)['params'].get('data', {})
+        print(f" [CHECK] Child Episode Project Path: {ep_data.get('project_path')}")
+        
+        if "newpr" in ep_data.get('project_path', ""):
+             print(" [PASS] Child inherited new Project Path.")
+        else:
+             print(" [FAIL] Child did NOT inherit new Project Path.")
+    else:
+        print(" [FAIL] Episode child missing!")
+
+    
     # 3. Simulate Renaming Episode
     print("\n [TEST] Renaming Episode 'Episode 01' -> 'Episode 99'")
-    ep_item = root.child(1) # Assuming flat list/root for testing populate_tree logic
-    # Wait, populate_tree reconstructs hierarchy. Episode might be child of Project if hierarchy exists?
-    # But our plan list is flat. `populate_tree` code tries to map parents.
-    # In this logic, Episode has no 'widget' attached so it won't find parent mapped. 
-    # So both will be at root. Correct.
+    # Reuse ep_item from above (passed around) or fetch from hierarchy
+    ep_item = proj_item.child(0)
     
     ep_item.setText(1, "Episode 99")
     
     ep_step = ep_item.data(0, Qt.UserRole)
     print(f" [CHECK] New Name: {ep_step['name']}")
-    print(f" [CHECK] New Code: {ep_step['params']['code']}") # Should NOT change
+    print(f" [CHECK] New Code (Param): {ep_step['params']['code']}") 
     
     ep_data = ep_step['params'].get('data', {})
-    print(f" [CHECK] Data.episode_name: {ep_data.get('episode_name')}")
+    print(f" [CHECK] Data.episode_code: {ep_data.get('episode_code')}") 
     
-    # 4. Check Pretty Printing
+    if ep_data.get('episode_code') == "episode 99":
+         print(" [PASS] Data.episode_code updated to name.lower().")
+    else:
+         print(f" [FAIL] Data.episode_code: {ep_data.get('episode_code')}")
+         
+    # 4. Simulate Renaming Asset Type
+    print("\n [TEST] Renaming Asset Type 'Characters' -> 'Props'")
+    at_item.setText(1, "Props")
+    
+    # Check Child Asset
+    child_asset_item = at_item.child(0)
+    asset_step = child_asset_item.data(0, Qt.UserRole)
+    asset_data = asset_step['params']['data']
+    
+    print(f" [CHECK] Child Asset Type Name: {asset_data.get('asset_type')}")
+    print(f" [CHECK] Child Asset Type Path: {asset_data.get('asset_type_path')}")
+    print(f" [CHECK] Child Asset Path: {asset_data.get('asset_path')}")
+    
+    if "props" in asset_data.get('asset_type_path', ""):
+        print(" [PASS] Asset Type Path updated recursively.")
+    else:
+        print(" [FAIL] Asset Type Path NOT updated.")
+        
+    # 5. Check Pretty Printing
     print("\n [TEST] Checking HTML Output for Project...")
     dialog.on_item_clicked(proj_item, 0)
     html = dialog.details.toHtml()

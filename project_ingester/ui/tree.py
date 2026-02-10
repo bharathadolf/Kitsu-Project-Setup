@@ -393,6 +393,9 @@ class HybridNodeContainer(QWidget):
             menu.exec_(global_pos)
 
     def run_dry_run(self, hierarchy=False):
+        from ..core.setup import ProjectManager
+        import json
+        
         node_name = self.node_frame.properties.get("name", "Unknown")
         
         output_lines = []
@@ -400,43 +403,62 @@ class HybridNodeContainer(QWidget):
         output_lines.append(f"[DRY-RUN] Started for: {node_name}")
         output_lines.append(f"Mode: {'Hierarchy' if hierarchy else 'Selected Only'}")
         
-        if hierarchy:
-            self._log_hierarchy(self.item, output_lines, level=0)
-        else:
-            import json
-            props = json.dumps(self.node_frame.properties, indent=4)
-            output_lines.append(f"{node_name}")
-            output_lines.append(f"    Properties:")
-            for line in props.split('\n'):
-                output_lines.append(f"        {line}")
+        try:
+            # We use a dummy logger to avoid polluting the main console with 'Resolving...' messages
+            # unless an error occurs. Or we can pass self.log_to_console if we want them.
+            # User wants to see the RESULTING data structure.
+            manager = ProjectManager(log_callback=lambda m, l: None)
+            
+            # We must ensure we are connected or at least have context if needed, 
+            # though build_plan tries to be standalone if possible. 
+            # Verify if connection is needed for generate codes? 
+            # Yes, build_plan checks connection for existing codes.
+            # If not connected, it might fallback to locals or default.
+            # We'll try to connect if possible or standard manager logic.
+            if hasattr(manager, 'connect') and not manager.connected:
+                 # Check if we can connect without credentials? No.
+                 # We'll assume user might be connected or we proceed offline (best effort).
+                 pass
+
+            plan = manager.build_plan(self.item, self.tree, hierarchy=hierarchy)
+            
+            if not plan:
+                output_lines.append("No entities found to generate.")
+            else:
+                for step in plan:
+                    s_type = step['type']
+                    s_name = step['name']
+                    s_params = step['params']
+                    
+                    output_lines.append(f"--- {s_type}: {s_name} ---")
+                    
+                    # Highlight DATA if present
+                    if 'data' in s_params:
+                        output_lines.append("    [Computed Data]:")
+                        data_str = json.dumps(s_params['data'], indent=4)
+                        for line in data_str.split('\n'):
+                            output_lines.append(f"        {line}")
+                            
+                    # Show other params briefly? or full?
+                    # User specifically asked for dry run log to match Generate log which shows "data parameter".
+                    # Let's show full params minus data (already shown) or just full params.
+                    # Showing full params is safest.
+                    
+                    output_lines.append("    [All Parameters]:")
+                    # Exclude 'data' from this dump to avoid duplication if it's large?
+                    # or just dump everything.
+                    full_str = json.dumps(s_params, indent=4)
+                    for line in full_str.split('\n'):
+                        output_lines.append(f"        {line}")
+                        
+        except Exception as e:
+            output_lines.append(f"ERROR during Dry-Run: {str(e)}")
+            import traceback
+            output_lines.append(traceback.format_exc())
             
         output_lines.append(f"========================================")
         
         self.log_to_console("\n".join(output_lines), "INFO")
-
-    def _log_hierarchy(self, item, output_lines, level=0):
-        widget = self.tree.itemWidget(item, 0)
-        if not widget: return
-        
-        # Tree indentation for the node name
-        if level == 0:
-            prefix = ""
-        else:
-            prefix = "  " * (level - 1) + "└── "
-            
-        name = widget.node_frame.properties.get("name", "Unknown")
-        output_lines.append(f"{prefix}{name}")
-        
-        # Properties indentation (indented relative to the node name)
-        prop_indent = "    " if level == 0 else ("  " * level + "    ")
-        import json
-        props_str = json.dumps(widget.node_frame.properties, indent=4)
-        output_lines.append(f"{prop_indent}Properties:")
-        for line in props_str.split('\n'):
-            output_lines.append(f"{prop_indent}    {line}")
-
-        for i in range(item.childCount()):
-            self._log_hierarchy(item.child(i), output_lines, level + 1)
 
     def run_generate(self, hierarchy=False):
         from ..core.setup import ProjectManager

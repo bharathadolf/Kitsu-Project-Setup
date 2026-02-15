@@ -1,6 +1,9 @@
 import gazu
 from ..kitsu_config import KITSU_HOST, KITSU_EMAIL, KITSU_PASSWORD
 
+from ..ui.dialogs import LoginDialog
+from ..utils.compat import QApplication, QMessageBox
+
 class ProjectLoader:
     def __init__(self, log_callback=None):
         self.log_callback = log_callback if log_callback else print
@@ -10,19 +13,72 @@ class ProjectLoader:
         self.log_callback(message, level)
 
     def connect(self):
-        if self.connected:
+        # 1. Simple check if already connected
+        if self.connected: 
             return True
-        
+            
         self.log(f"Connecting to Kitsu ({KITSU_HOST})...", "INFO")
+        
+        # 2. Config credentials
+        current_host = KITSU_HOST
+        current_email = KITSU_EMAIL
+        current_password = KITSU_PASSWORD
+
         try:
-            gazu.set_host(KITSU_HOST)
-            gazu.log_in(KITSU_EMAIL, KITSU_PASSWORD)
+            # 3. Try standard connection first
+            gazu.set_host(current_host)
+            gazu.log_in(current_email, current_password)
             self.log(f"✅ Connected to Kitsu", "SUCCESS")
             self.connected = True
             return True
         except Exception as e:
             self.log(f"❌ Connection Failed: {e}", "ERROR")
-            return False
+            
+            # 4. Interactive Fallback (Loop)
+            while True:
+                # Determine parent for dialog
+                app = QApplication.instance()
+                parent = None
+                if app:
+                    parent = app.activeWindow()
+                    # Fallback: if activeWindow is None (sometimes happens on startup), try topLevelWidgets
+                    if not parent:
+                        widgets = app.topLevelWidgets()
+                        for w in widgets:
+                            if isinstance(w, QMainWindow):
+                                parent = w
+                                break
+                
+                # Show Login Dialog
+                self.log("Prompting user for credentials...", "INFO")
+                dialog = LoginDialog(parent, current_host, current_email, current_password)
+                
+                result = dialog.exec_()
+                if result:
+                    new_host, new_email, new_pass = dialog.get_credentials()
+                    
+                    try:
+                        self.log(f"Retrying connection to {new_host}...", "INFO")
+                        gazu.set_host(new_host)
+                        gazu.log_in(new_email, new_pass)
+                        self.log(f"✅ Login successful", "SUCCESS")
+                        self.connected = True
+                        
+                        # Update current vars for loop logic (though we return True)
+                        current_host = new_host
+                        current_email = new_email
+                        current_password = new_pass
+                        
+                        return True
+                    except Exception as retry_err:
+                        error_msg = str(retry_err)
+                        self.log(f"❌ Retry Failed: {error_msg}", "ERROR")
+                        if parent:
+                            QMessageBox.critical(parent, "Login Failed", f"Could not connect:\n{error_msg}")
+                        # Loops back to show dialog again
+                else:
+                    self.log("User cancelled login.", "WARNING")
+                    return False
 
     def get_all_projects(self):
         if not self.connect():

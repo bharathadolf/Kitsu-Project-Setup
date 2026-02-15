@@ -1,0 +1,28 @@
+Starting Test...
+Sys Path: ['d:\\AfterZFx\\ProjectIngester\\tests', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\Lib\\site-packages', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\python310.zip', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\DLLs', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\lib', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\win32', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\win32\\lib', 'C:\\Users\\Adolf\\AppData\\Local\\Programs\\Python\\Python310\\lib\\site-packages\\Pythonwin', 'd:\\AfterZFx\\ProjectIngester']
+Dialog Created.
+Template set to Shots Only.
+--- TEST 1: Direct Children (ProjectA) ---
+Path: d:\AfterZFx\ProjectIngester\tests\temp_test_data\ProjectA
+Tree Refreshed.
+Root Expanded: False
+Sequence Category Selection: <Direct Children of ProjectA>
+Sequence Category Child Count: 2
+Sequence Category Expanded: True
+Instance 1: sq01
+Instance 1 Expanded: False
+sq01 Shot Selection: shots
+Instance 2: sq02
+Instance 2 Expanded: False
+sq02 Shot Selection: <Direct Children of sq02>
+Stats Log Content:
+Project Statistics:
+• Level 1 Entities (e.g. Sequences): 2
+• Level 2 Entities (e.g. Shots): 3
+• Mapped Entity Groups: 3
+• Unmapped Groups: 0
+
+--- TEST 2: Empty Root ---
+Empty Root Expanded: True
+Empty Sequence Selection: Select Folder...
+Test Complete.

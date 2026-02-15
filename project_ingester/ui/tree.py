@@ -1174,4 +1174,71 @@ class ProjectStructureWidget(QWidget):
                 can_delete = (i > 0) and is_last_sibling
                 widget.node_frame.set_delete_visible(can_delete)
 
+    def populate_from_structure(self, data):
+        """
+        Rebuilds the tree based on the nested dictionary returned by FolderMapper.
+        data format: { 'type':..., 'name':..., 'children': [ ... ] }
+        """
+        self.tree.clear()
+        
+        # 1. Root
+        root_type = data.get('type', 'project')
+        # Ensure rules exist? We assume template is already set or we should set it?
+        # The App should sets template before calling this if needed.
+        
+        root_item = self.add_node(None, root_type, is_root=True)
+        self._apply_data_to_node(root_item, data)
+        self.tree.expandItem(root_item)
+        
+        # 2. Children
+        self._recursive_populate(root_item, data.get('children', []))
+        
+    def _recursive_populate(self, parent_item, children_data):
+        for child in children_data:
+            node_type = child.get('type')
+            
+            # Check if allowed by rules? 
+            # add_node checks NOTHING regarding validity usually, it just adds.
+            # But the UI buttons invoke 'on_add_child' which checks rules.
+            # Here we force add.
+            
+            new_item = self.add_node(parent_item, node_type)
+            self._apply_data_to_node(new_item, child)
+            
+            # Recurse
+            self._recursive_populate(new_item, child.get('children', []))
+
+    def _apply_data_to_node(self, item, data):
+        widget = self.tree.itemWidget(item, 0)
+        if widget and widget.node_frame:
+            name = data.get('name', 'Unknown')
+            widget.node_frame.properties['name'] = name
+            widget.node_frame.name_edit.setText(name)
+            
+            # Update Code if possible? 
+            # The node_frame might have auto-generated a code based on "New Asset".
+            # We should probably re-trigger code generation or let the user see the current state.
+            # For now, we trust the name.
+            
+            # Also store path in extra properties if we want to use it later?
+            if 'path' in data:
+                path_val = data['path']
+                widget.node_frame.properties['local_scan_path'] = path_val
+                
+                # FIX: If this is the Project node, we must set 'root_path' 
+                # so the ProjectForm (Panel 2) picks it up.
+                if widget.node_frame.node_type == 'project':
+                    widget.node_frame.properties['root_path'] = path_val
+                    
+                    # Also update the special 'data' dictionary which ProjectForm uses
+                    if 'data' not in widget.node_frame.properties:
+                        widget.node_frame.properties['data'] = {}
+                    
+                    # Ensure it's a dict (it might be None if initialized empty)
+                    if not isinstance(widget.node_frame.properties['data'], dict):
+                        widget.node_frame.properties['data'] = {}
+                        
+                    widget.node_frame.properties['data']['root_path'] = path_val
+
+
 

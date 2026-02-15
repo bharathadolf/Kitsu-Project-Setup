@@ -169,6 +169,11 @@ class MainWindow(QMainWindow):
         connect_action.triggered.connect(self.connect_kitsu)
         view_menu.addAction(connect_action)
 
+        # File Menu Extensions
+        build_folder_action = QAction("Build from Folders...", self)
+        build_folder_action.triggered.connect(self.open_folder_builder)
+        file_menu.addAction(build_folder_action)
+
     def clear_console(self):
         self.console.clear()
         self.console.log("Console cleared", "INFO")
@@ -192,27 +197,26 @@ class MainWindow(QMainWindow):
         self.update_panel_sizes()
         super().showEvent(event)
 
-    def connect_kitsu(self):
+    def connect_kitsu(self, *args):
         if gazu is None:
             self.console.log("Gazu library not found. Please install 'gazu'.", "ERROR")
             self.status_light.setStyleSheet("background-color: #FF4444; border-radius: 10px; border: 2px solid #333;")
             self.status_light.setToolTip("Status: Error (Gazu Missing)")
             return
 
-        self.console.log(f"Connecting to Kitsu at {KITSU_HOST}...", "INFO")
-        try:
-            gazu.set_host(KITSU_HOST)
-            gazu.log_in(KITSU_EMAIL, KITSU_PASSWORD)
-            
-            self.console.log("✅ Login successful", "SUCCESS")
+        # Use loader's robust connect method which includes retry/UI dialog
+        if self.loader.connect():
             # Green Light
             self.status_light.setStyleSheet("background-color: #00FF00; border-radius: 10px; border: 2px solid #55FF55;")
             self.status_light.setToolTip("Status: Connected to Kitsu")
-            
-        except Exception as e:
-            self.console.log(f"❌ Connection failed: {str(e)}", "ERROR")
+        else:
+            # Red Light
+            # If user cancelled, we just stay disconnected. Status light reflects "Failed" or determines by loader logic?
+            # Actually if connect() returns False because of user cancel, we probably shouldn't show RED if it was just "Not Connected".
+            # But the user might want feedback. Let's keep it red for now or maybe yellow if cancelled?
+            # loader.connect() returns False if failed OR cancelled.
             self.status_light.setStyleSheet("background-color: #FF0000; border-radius: 10px; border: 2px solid #333;")
-            self.status_light.setToolTip(f"Status: Connection Failed ({str(e)})")
+            self.status_light.setToolTip("Status: Connection Failed or Cancelled")
 
     def populate_projects_menu(self):
         self.load_project_menu.clear()
@@ -301,3 +305,21 @@ class MainWindow(QMainWindow):
     def on_viewer_requested(self, params, node_type):
         dialog = EntityViewerDialog(params, node_type, self)
         dialog.exec()
+
+    def open_folder_builder(self):
+        from .dialogs_builder import FolderBuilderDialog
+        dialog = FolderBuilderDialog(self)
+        if dialog.exec_():
+            data = dialog.result_data
+            if data:
+                self.console.log(f"Building tree from folder: {data.get('path')}", "INFO")
+                # Apply the template chosen in dialog to ensure rules match
+                # The dialog doesn't return template name directly in result_data usually, 
+                # but we can infer it or pass it. 
+                # Let's assume result_data is just the tree. 
+                # Ideally we should switch the main window template to match.
+                
+                # For now, just populate.
+                self.project_panel.populate_from_structure(data)
+                self.console.log("Tree populated from folders.", "SUCCESS")
+

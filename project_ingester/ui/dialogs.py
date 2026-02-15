@@ -113,59 +113,41 @@ class GenerationSummaryDialog(QDialog):
         # 1. Sanity Check
         if not self.sanity_check(): return
         
-        # 2. Execute
-        self.status_label.setText("Generating Project... Please wait.")
+        # 2. UI Prep
+        self.status_label.setText("Starting Generation... Please wait.")
         self.set_buttons_enabled(False)
         
-        # Temporarily lock
-        QApplication.processEvents() # Force UI Update
-        
-        try:
-            success = self.manager.execute_plan(self.plan)
-            
-            if not success:
-                self.status_label.setText("Generation Failed. Check Console.")
-                self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
-                self.set_buttons_enabled(True)
-                return
+        # 3. Threaded Execution
+        self.worker = GenerationWorker(self.manager, self.plan)
+        self.worker.progress.connect(self.update_status)
+        self.worker.finished.connect(self.on_generation_finished)
+        self.worker.error.connect(self.on_generation_error)
+        self.worker.start()
 
-            self.is_generated = True
+    def update_status(self, msg):
+        self.status_label.setText(msg)
+        # self.status_label.repaint() # Optional
 
-            # 3. Explicit wait
-            import time
-            time.sleep(2)
+    def on_generation_finished(self, success):
+        self.is_generated = success
+        if success:
+            self.status_label.setText("Generation & Query Complete.")
+            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; margin-left: 10px;")
             
-            # 4. Query (Fetch from Server)
-            self.status_label.setText("Project Created. Querying Data...")
-            QApplication.processEvents()
-            
-            # Save current selection index before clearing
-            current_idx = self.tree.currentIndex()
-            
-            # Force fresh fetch from server
-            self.manager.fetch_entity_data(self.plan) 
-            
-            # CRITICAL: Re-bind the updated plan data to the UI Tree
+            # Re-bind the updated plan data (which was modified in-place by the worker)
             self.populate_tree()
             
-            # Restore selection
-            if current_idx.isValid():
-                self.tree.setCurrentIndex(current_idx)
-                current_item = self.tree.currentItem()
-                if current_item:
-                    self.on_item_clicked(current_item, 0)
-            
-            self.status_label.setText("Data Fetched Successfully.")
-            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold; margin-left: 10px;")
-                
-            # Keep buttons disabled except Cancel (to Close)
             self.btn_cancel.setEnabled(True)
             self.btn_cancel.setText("Close")
-            
-        except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
-            self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
-            self.btn_cancel.setEnabled(True)
+        else:
+             self.status_label.setText("Generation Failed.")
+             self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+             self.set_buttons_enabled(True)
+
+    def on_generation_error(self, err_msg):
+        self.status_label.setText(f"Error: {err_msg}")
+        self.status_label.setStyleSheet("color: #F44336; font-weight: bold;")
+        self.set_buttons_enabled(True)
 
     def set_buttons_enabled(self, enabled):
         self.btn_generate.setEnabled(enabled)
@@ -251,9 +233,14 @@ class GenerationSummaryDialog(QDialog):
                 if self.tree.currentItem() == item:
                      self.refresh_details(step)
 
-    def log_update(self, msg):
-        self.status_label.setText(msg)
-        print(f" [UPDATE] {msg}")
+
+
+
+    def log_update(self, message):
+         if self.manager and hasattr(self.manager, 'log'):
+             self.manager.log(message, "DEBUG")
+         else:
+             print(f"[Dialog] {message}")
 
     def _recursive_update(self, item):
         """
@@ -596,7 +583,100 @@ class EntityViewerDialog(GenerationSummaryDialog):
         elif self.node_type == "asset":
             self.display_asset_details(self.params, is_fetched)
         else:
+
             # Fallback
             import json
             text = json.dumps(self.params, indent=4)
             self.details.setText(text)
+
+class GenerationWorker(QThread):
+    progress = Signal(str)
+    finished = Signal(bool)
+    error = Signal(str)
+
+    def __init__(self, manager, plan):
+        super().__init__()
+        self.manager = manager
+        self.plan = plan
+
+    def run(self):
+        try:
+            self.progress.emit("Executing Creation Plan...")
+            success = self.manager.execute_plan(self.plan)
+            
+            if not success:
+                self.finished.emit(False)
+                return
+
+            self.progress.emit("Waiting for Kitsu propagation...")
+            import time
+            time.sleep(2)
+            
+            self.progress.emit("Querying Live Data...")
+            self.manager.fetch_entity_data(self.plan)
+            
+            self.finished.emit(True)
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error.emit(str(e))
+
+class LoginDialog(QDialog):
+    def __init__(self, parent=None, host="", email="", password=""):
+        super().__init__(parent)
+        self.setWindowTitle("Kitsu Login")
+        self.resize(300, 150)
+        self.host = host
+        self.email = email
+        self.password = password
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        form_layout = QFormLayout()
+        
+        self.host_edit = QLineEdit(self.host)
+        self.host_edit.setPlaceholderText("http://localhost/api")
+        form_layout.addRow("Kitsu Host:", self.host_edit)
+        
+        self.email_edit = QLineEdit(self.email)
+        self.email_edit.setPlaceholderText("admin@example.com")
+        form_layout.addRow("Email:", self.email_edit)
+        
+        self.pass_edit = QLineEdit(self.password)
+        self.pass_edit.setEchoMode(QLineEdit.Password)
+        self.pass_edit.setPlaceholderText("Password")
+        form_layout.addRow("Password:", self.pass_edit)
+        
+        layout.addLayout(form_layout)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.btn_cancel = QPushButton("Cancel")
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+        
+        self.btn_login = QPushButton("Login")
+        self.btn_login.clicked.connect(self.on_login)
+        self.btn_login.setStyleSheet("background-color: #2e7d32; color: white; font-weight: bold; padding: 5px 15px;")
+        btn_layout.addWidget(self.btn_login)
+        
+        layout.addLayout(btn_layout)
+        
+    def on_login(self):
+        self.host = self.host_edit.text().strip()
+        self.email = self.email_edit.text().strip()
+        self.password = self.pass_edit.text().strip()
+        
+        if not self.host or not self.email or not self.password:
+             QMessageBox.warning(self, "Validation Error", "All fields are required.")
+             return
+             
+        self.accept()
+        
+    def get_credentials(self):
+        return self.host, self.email, self.password
+

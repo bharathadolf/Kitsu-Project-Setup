@@ -1,6 +1,7 @@
 import sys
 import os
 
+
 # Ensure package is found
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -38,7 +39,7 @@ def main():
         # if app: app.setStyle("Fusion") 
 
         window = MainWindow(parent)
-        window.resize(1400, 800) # Ensure it's large enough
+        window.resize(1200, 600) # Ensure it's large enough
         window.show()
         window.setWindowTitle("Project Ingester")
         hou.session.project_ingester_window = window
@@ -51,7 +52,7 @@ def main():
         app.setStyle("Fusion")
             
         window = MainWindow()
-        window.resize(1400, 800) # Ensure it's large enough
+        window.resize(1200, 600) # Ensure it's large enough
         window.show()
         
         if QT_VERSION == 6:

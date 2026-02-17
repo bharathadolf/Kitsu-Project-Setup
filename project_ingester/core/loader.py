@@ -19,17 +19,29 @@ class ProjectLoader:
             
         self.log(f"Connecting to Kitsu ({KITSU_HOST})...", "INFO")
         
-        # 2. Config credentials
-        current_host = KITSU_HOST
-        current_email = KITSU_EMAIL
-        current_password = KITSU_PASSWORD
+        # 2. Config credentials (or cached session credentials)
+        if hasattr(self, 'session_credentials'):
+            current_host = self.session_credentials['host']
+            current_email = self.session_credentials['email']
+            current_password = self.session_credentials['password']
+        else:
+            current_host = KITSU_HOST
+            current_email = KITSU_EMAIL
+            current_password = KITSU_PASSWORD
 
         try:
-            # 3. Try standard connection first
+            # 3. Try standard/cached connection first
             gazu.set_host(current_host)
             gazu.log_in(current_email, current_password)
             self.log(f"✅ Connected to Kitsu", "SUCCESS")
             self.connected = True
+            
+            # Cache these working credentials for the session
+            self.session_credentials = {
+                'host': current_host,
+                'email': current_email,
+                'password': current_password
+            }
             return True
         except Exception as e:
             self.log(f"❌ Connection Failed: {e}", "ERROR")
@@ -64,10 +76,12 @@ class ProjectLoader:
                         self.log(f"✅ Login successful", "SUCCESS")
                         self.connected = True
                         
-                        # Update current vars for loop logic (though we return True)
-                        current_host = new_host
-                        current_email = new_email
-                        current_password = new_pass
+                        # Update cached credentials
+                        self.session_credentials = {
+                            'host': new_host,
+                            'email': new_email,
+                            'password': new_pass
+                        }
                         
                         return True
                     except Exception as retry_err:

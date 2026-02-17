@@ -20,10 +20,12 @@ class ProjectLoader:
         self.log(f"Connecting to Kitsu ({KITSU_HOST})...", "INFO")
         
         # 2. Config credentials (or cached session credentials)
-        if hasattr(self, 'session_credentials'):
-            current_host = self.session_credentials['host']
-            current_email = self.session_credentials['email']
-            current_password = self.session_credentials['password']
+        import project_ingester.kitsu_config as kc
+        
+        if kc.SESSION_CREDENTIALS:
+            current_host = kc.SESSION_CREDENTIALS['host']
+            current_email = kc.SESSION_CREDENTIALS['email']
+            current_password = kc.SESSION_CREDENTIALS['password']
         else:
             current_host = KITSU_HOST
             current_email = KITSU_EMAIL
@@ -36,8 +38,8 @@ class ProjectLoader:
             self.log(f"✅ Connected to Kitsu", "SUCCESS")
             self.connected = True
             
-            # Cache these working credentials for the session
-            self.session_credentials = {
+            # Cache these working credentials for the global session
+            kc.SESSION_CREDENTIALS = {
                 'host': current_host,
                 'email': current_email,
                 'password': current_password
@@ -77,13 +79,13 @@ class ProjectLoader:
                         self.connected = True
                         
                         # Update cached credentials
-                        self.session_credentials = {
+                        kc.SESSION_CREDENTIALS = {
                             'host': new_host,
                             'email': new_email,
                             'password': new_pass
                         }
-                        
                         return True
+
                     except Exception as retry_err:
                         error_msg = str(retry_err)
                         self.log(f"❌ Retry Failed: {error_msg}", "ERROR")

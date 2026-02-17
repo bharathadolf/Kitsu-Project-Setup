@@ -10,3 +10,8 @@ KITSU_EMAIL = "admin@example.com"
 #KITSU_EMAIL = "adolfbharath@gmail.com"
 KITSU_PASSWORD = "Gattig@Veyyi#3"
 #KITSU_PASSWORD = "Bharath@2026"
+
+# Global Session Store
+# Holds { 'host': ..., 'email': ..., 'password': ... } after successful login
+SESSION_CREDENTIALS = None
+

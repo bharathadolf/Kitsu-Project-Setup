@@ -29,15 +29,29 @@ class ProjectManager:
         self.log(f"Connecting to Kitsu ({KITSU_HOST})...", "INFO")
         
         # Config credentials
-        current_host = KITSU_HOST
-        current_email = KITSU_EMAIL
-        current_password = KITSU_PASSWORD
+        import project_ingester.kitsu_config as kc
+        
+        if kc.SESSION_CREDENTIALS:
+            current_host = kc.SESSION_CREDENTIALS['host']
+            current_email = kc.SESSION_CREDENTIALS['email']
+            current_password = kc.SESSION_CREDENTIALS['password']
+        else:
+            current_host = KITSU_HOST
+            current_email = KITSU_EMAIL
+            current_password = KITSU_PASSWORD
 
         try:
             gazu.set_host(current_host)
             gazu.log_in(current_email, current_password)
             self.log(f"✅ Connected to Kitsu", "SUCCESS")
             self.connected = True
+            
+            # Update global session
+            kc.SESSION_CREDENTIALS = {
+                'host': current_host,
+                'email': current_email,
+                'password': current_password
+            }
             return True
         except Exception as e:
             self.log(f"❌ Connection Failed: {e}", "ERROR")
@@ -65,9 +79,11 @@ class ProjectManager:
                         self.connected = True
                         
                         # Update current vars in case we need to loop again later (though we return True)
-                        current_host = new_host
-                        current_email = new_email
-                        current_password = new_pass
+                        kc.SESSION_CREDENTIALS = {
+                            'host': new_host,
+                            'email': new_email,
+                            'password': new_pass
+                        }
                         
                         return True
                     except Exception as retry_err:

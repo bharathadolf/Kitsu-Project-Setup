@@ -2,9 +2,8 @@ from ..utils.compat import *
 from ..data.rules import RULE_MAP
 from .themes import DARK_THEME # Fallback
 import os
-from PySide2 import QtCore, QtGui, QtWidgets # Fallback import if compat doesn't provide specific classes? 
-# Actually compat provides QtWidgets, QtCore, QtGui.
-# Let's use those.
+# Fallback removed, relying on compat
+
 from ..utils.compat import * 
 
 
